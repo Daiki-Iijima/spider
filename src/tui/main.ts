@@ -17,6 +17,7 @@ type Request =
   | { op: "ask"; text: string }
   | { op: "provider"; provider: Provider }
   | { op: "new"; title: string }
+  | { op: "import"; path: string }
   | { op: "export"; path: string };
 
 const defaultTitle = "Untitled map";
@@ -63,6 +64,30 @@ function readSession(): { mapId?: string; nodeId?: string; provider?: Provider }
 
 function text(value: string): string {
   return value.replace(/\r\n?/g, "\n").replaceAll("\0", "�");
+}
+
+function importConversation(path: string): ChatMap {
+  const json = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
+  let data: { format?: unknown; title?: unknown; messages?: unknown } | null;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new Error("Invalid JSON. Save just the JSON object, without Markdown fences.");
+  }
+  if (data?.format !== "spider-chat-v1" || typeof data.title !== "string" || !data.title.trim()
+    || !Array.isArray(data.messages) || data.messages.length === 0) {
+    throw new Error('Expected format "spider-chat-v1", a non-empty title, and at least one message.');
+  }
+  const messages = data.messages.map((message: { role?: unknown; content?: unknown } | null, index) => {
+    if ((message?.role !== "user" && message?.role !== "assistant")
+      || typeof message.content !== "string" || !message.content.trim()) {
+      throw new Error(`Message ${index + 1} must have role "user" or "assistant" and non-empty content.`);
+    }
+    return createMessage(message.role, text(message.content));
+  });
+  const title = truncateText(data.title, 120);
+  const map = createRootMap(title, title);
+  return updateNode(map, map.rootNodeId, { messages });
 }
 
 function run(): void {
@@ -218,6 +243,12 @@ function run(): void {
         save(createRootMap(truncateText(request.title, 120) || defaultTitle));
         select(map.rootNodeId);
         return;
+      case "import": {
+        const imported = importConversation(request.path);
+        save(imported);
+        select(imported.rootNodeId);
+        return;
+      }
       case "export": {
         if (!request.path.trim()) throw new Error("Enter a Markdown file path.");
         const path = resolve(request.path);

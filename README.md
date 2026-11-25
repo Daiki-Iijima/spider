@@ -35,7 +35,7 @@ To open Spider inside your existing editor, add this local spec to lazy.nvim and
 ```lua
 return {
   dir = vim.fn.expand("~/Projects/spider"), -- use the path to your built checkout
-  cmd = { "Spider", "SpiderBranch" },
+  cmd = { "Spider", "SpiderBranch", "SpiderImport" },
 }
 ```
 
@@ -48,9 +48,26 @@ return {
 | Choose a branch in the tree | `Ctrl+w w` to focus the tree, then `Enter` on the branch |
 | Switch provider or cancel a request | `p` or `x` |
 | Open, create, or export a map to Markdown | `m`, `n`, or `e` |
+| Import a conversation as a new map | `I` or `:SpiderImport path/to/chat.json` |
 | Close Spider | `q` |
 
 Selecting or branching does not send anything. Submitting a prompt sends the current branch history, its quote (if any), and the parent topic, not your open buffers or working directory. Provider commands run in a temporary directory with tool access restricted; system and organization policies still apply. Maps are stored in `$XDG_DATA_HOME/spider-tui` (usually `~/.local/share/spider-tui`), separately from Obsidian. Override the location with `SPIDER_DATA_DIR`.
+
+### Import a ChatGPT conversation
+
+Paste the prompt below into the **ChatGPT conversation you want to bring over**. Save the returned JSON object (not the surrounding Markdown) as a UTF-8 file, for example `chat.json`, then run `:SpiderImport ~/Downloads/chat.json` or press `I` in Spider.
+
+```text
+このチャットで、この依頼より前に交わした会話を Spider に移したいです。
+あなたが参照できる範囲の私の発言とあなたの回答を、古い順に、1 発言ずつ JSON にしてください。
+要約・翻訳・補完はせず、本文、Markdown、コードをそのまま残してください。
+見えていない発言は推測せず、この依頼や、この依頼への返事も含めないでください。
+私の発言は user、あなたの回答は assistant とし、次の形式で有効な JSON オブジェクトだけを返してください。説明やコードフェンスは不要です。改行や引用符は JSON としてエスケープしてください。
+
+{"format":"spider-chat-v1","title":"会話を表す短いタイトル","messages":[{"role":"user","content":"発言本文"},{"role":"assistant","content":"回答本文"}]}
+```
+
+The messages are imported in array order into the root of a new local map. Importing does not call the AI or replace existing maps; submitting a follow-up at the root sends the imported history to the selected provider. ChatGPT may not be able to reproduce a long conversation in full. Check the exported text against the original; attachments and tool results aren't part of this format.
 
 ---
 

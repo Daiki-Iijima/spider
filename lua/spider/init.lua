@@ -79,7 +79,7 @@ local function render_tree(session)
   local lines = {
     state and label(state.map.title) or "Spider",
     "Enter select · C-w w switch",
-    "m maps · n new · e export",
+    "m maps · n new · I import · e export",
     "p provider · x cancel · q close",
     "",
   }
@@ -166,7 +166,7 @@ end
 
 local replies = {
   ["goto"] = "state", parent = "state", branch = "state", provider = "state",
-  maps = "maps", open = "state", new = "state", export = "notice",
+  maps = "maps", open = "state", new = "state", import = "state", export = "notice",
 }
 
 local function ready(session)
@@ -314,9 +314,9 @@ local function receive(session, event)
     if not same_node or old.map.title ~= event.map.title or not vim.deep_equal(old.tree, event.tree) then render_tree(session) end
     if not same_node or not vim.deep_equal(old.node, event.node) then render_transcript(session, same_node) end
     if event.jump then show_source(session, event.jump) end
-    local queued = session.startup_branch
+    local queued = session.startup_request
     if queued then
-      session.startup_branch = nil
+      session.startup_request = nil
       send(session, queued)
     end
   elseif event.type == "submitted" then
@@ -410,6 +410,11 @@ local function bind(session, buf)
   key("n", function()
     input("New Spider map title: ", nil, function(title) return { op = "new", title = title } end)
   end, "Create Spider map")
+  key("I", function()
+    input("Import Spider conversation from: ", "file", function(path)
+      return { op = "import", path = fn.fnamemodify(path, ":p") }
+    end)
+  end, "Import Spider conversation")
   key("e", function()
     input("Export Spider map to: ", "file", function(path) return { op = "export", path = path } end)
   end, "Export Spider map")
@@ -508,6 +513,20 @@ function M.open()
   return session
 end
 
+local function open_with_request(request)
+  local session = M.open()
+  if not session then return end
+  if session.job and not session.state and not session.startup_request then
+    session.startup_request = request
+  else
+    send(session, request)
+  end
+end
+
+function M.import(path)
+  open_with_request({ op = "import", path = fn.fnamemodify(path, ":p") })
+end
+
 function M.branch(first, last)
   local buf = api.nvim_get_current_buf()
   if active and (buf == active.tree or buf == active.transcript or (active.composer and buf == active.composer.buf)) then
@@ -516,14 +535,7 @@ function M.branch(first, last)
   end
   local anchor = table.concat(api.nvim_buf_get_lines(buf, first - 1, last, true), "\n")
   if not anchor:find("%S") then notify("Select non-empty editor lines to quote."); return end
-  local session = M.open()
-  if not session then return end
-  local request = { op = "branch", anchor = anchor }
-  if session.job and not session.state and not session.startup_branch then
-    session.startup_branch = request
-  else
-    send(session, request)
-  end
+  open_with_request({ op = "branch", anchor = anchor })
 end
 
 return M
