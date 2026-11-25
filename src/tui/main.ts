@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,26 +7,32 @@ import { addChildNode, appendMessage, createMessage, createRootMap, updateMapTit
 import { isChatMap, isSourceTextRange } from "../domain/guards";
 import { exportMarkdown } from "../export/exporters";
 import type { BranchSource, ChatMap } from "../types";
-import { truncateText } from "../utils/text";
+import { cleanText, truncateText } from "../utils/text";
 import { createId } from "../utils/id";
 import { askProvider, type Provider } from "./providers";
 
 type Request =
   | { op: "goto" | "open"; id: string }
-  | { op: "parent" | "cancel" | "maps" }
+  | { op: "parent" | "cancel" | "maps" | "words" }
   | { op: "branch"; source?: BranchSource; anchor?: string }
   | { op: "fork"; messageId: string; line: number }
   | { op: "copy-history"; childId: string; first: string; last: string }
+  | { op: "word-add"; text: string }
+  | { op: "word-note"; word: string; note: string }
   | { op: "ask"; text: string }
   | { op: "provider"; provider: Provider }
   | { op: "new"; title: string }
   | { op: "import"; path: string }
   | { op: "export"; path: string };
 
+type WordNote = { word: string; note: string };
+
 const defaultTitle = "無題のマップ";
 const dataOverride = process.env.SPIDER_DATA_DIR;
 const dataDir = resolve(dataOverride || join(homedir(), "Spider"));
 const mapsDir = join(dataDir, "maps");
+const wordsDir = join(dataDir, "words");
+const wordFilename = /^[a-f0-9]{64}\.json$/;
 const sessionPath = join(dataDir, "session.json");
 const validId = /^map_[a-z\d_-]+$/i;
 
@@ -41,6 +47,10 @@ function writeJson(path: string, value: unknown): string {
     throw error;
   }
   return data;
+}
+
+function wordPath(word: string): string {
+  return join(wordsDir, `${createHash("sha256").update(word).digest("hex")}.json`);
 }
 
 function mapPath(id: string): string {
@@ -302,6 +312,36 @@ function run(): void {
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
           .map(({ id, title }) => ({ id, title }));
         emit({ type: "maps", maps });
+        return;
+      }
+      case "words": {
+        const words = existsSync(wordsDir)
+          ? readdirSync(wordsDir)
+              .filter((name) => wordFilename.test(name))
+              .map((name) => JSON.parse(readFileSync(join(wordsDir, name), "utf8")) as WordNote)
+              .sort((a, b) => a.word.localeCompare(b.word, "ja"))
+          : [];
+        emit({ type: "words", words });
+        return;
+      }
+      case "word-add": {
+        const word = cleanText(text(request.text));
+        if (!word) throw new Error("保存する語句を選択してください。");
+        mkdirSync(wordsDir, { mode: 0o700, recursive: true });
+        const path = wordPath(word);
+        if (existsSync(path)) {
+          emit({ type: "notice", message: "この語句は単語ノートに保存済みです。" });
+          return;
+        }
+        writeJson(path, { word, note: "" } satisfies WordNote);
+        emit({ type: "notice", message: "単語ノートに保存しました。" });
+        return;
+      }
+      case "word-note": {
+        const path = wordPath(request.word);
+        if (!existsSync(path)) throw new Error("単語ノートに語句が見つかりません。");
+        writeJson(path, { word: request.word, note: text(request.note).trim() } satisfies WordNote);
+        emit({ type: "notice", message: "単語ノートのメモを更新しました。" });
         return;
       }
       case "open":

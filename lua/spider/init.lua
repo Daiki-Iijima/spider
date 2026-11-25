@@ -407,6 +407,7 @@ end
 local replies = {
   ["goto"] = "state", parent = "state", branch = "state", provider = "state",
   fork = "state", ["copy-history"] = "state",
+  words = "words", ["word-add"] = "notice", ["word-note"] = "notice",
   maps = "maps", open = "state", new = "state", import = "state", export = "notice",
 }
 
@@ -632,8 +633,43 @@ local function visual_branch(session)
   notify("1 件の応答内で、空白以外の文字を選択してください。")
 end
 
+local function save_word(session)
+  local mode = fn.mode()
+  if mode ~= "v" and mode ~= "V" then
+    notify("保存する語句は文字単位か行単位で選択してください。")
+    return
+  end
+  local a, b = fn.getpos("v"), fn.getpos(".")
+  local first, last = math.min(a[2], b[2]), math.max(a[2], b[2])
+  for _, block in pairs(session.blocks) do
+    if first >= block.first and last < block.first + #block.lines then
+      local region = fn.getregion(a, b, { type = mode, exclusive = vim.o.selection == "exclusive" })
+      if send(session, { op = "word-add", text = table.concat(region, "\n") }) then
+        api.nvim_feedkeys(vim.keycode("<Esc>"), "ni", false)
+      end
+      return
+    end
+  end
+  notify("1 件の質問または回答の中から語句を選択してください。")
+end
+
 local function visible(session)
   return live(session) and api.nvim_get_current_tabpage() == session.tab
+end
+
+local function review_words(session, words)
+  if #words == 0 then
+    notify("単語ノートは空です。本文で語句を選択して " .. command_hint .. "w で保存できます。")
+    return
+  end
+  vim.ui.select(words, { prompt = "単語ノート：", format_item = function(item) return label(item.word) end }, function(item)
+    if not item or not visible(session) then return end
+    vim.ui.input({ prompt = label(item.word) .. " のメモ：", default = item.note }, function(note)
+      if note ~= nil and note ~= item.note and visible(session) then
+        send(session, { op = "word-note", word = item.word, note = note })
+      end
+    end)
+  end)
 end
 
 local function copy_history(session)
@@ -707,6 +743,8 @@ local function receive(session, event)
     notify(event.message, vim.log.levels.ERROR)
   elseif event.type == "notice" then
     notify(event.message)
+  elseif event.type == "words" and visible(session) then
+    review_words(session, event.words)
   elseif event.type == "maps" and visible(session) then
     vim.ui.select(event.maps, { prompt = "Spider マップを選択：", format_item = function(item) return label(item.title) end }, function(item)
       if item and visible(session) then send(session, { op = "open", id = item.id }) end
@@ -791,6 +829,7 @@ local function bind(session, buf)
     end)
   end, "Spider の AI 接続先を選択")
   key(command_prefix .. "m", function() send(session, { op = "maps" }) end, "Spider マップを選択")
+  key(command_prefix .. "w", function() send(session, { op = "words" }) end, "Spider の単語ノートを開く")
   key(command_prefix .. "n", function()
     input("新しい Spider マップの名前：", nil, function(title) return { op = "new", title = title } end)
   end, "Spider マップを作成")
@@ -852,6 +891,8 @@ local function bind(session, buf)
     vim.keymap.set("x", "<Tab>", function() visual_branch(session) end, { buffer = buf, desc = "Spider の応答を引用して分岐" })
     vim.keymap.set("x", command_prefix .. "h", function() copy_history(session) end,
       { buffer = buf, desc = "選択した会話を空の子分岐にコピー" })
+    vim.keymap.set("x", command_prefix .. "w", function() save_word(session) end,
+      { buffer = buf, desc = "選んだ語句を Spider の単語ノートに保存" })
   end
 end
 
