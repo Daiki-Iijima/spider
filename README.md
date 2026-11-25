@@ -69,6 +69,8 @@ return {
 | 会話を新しいマップとして取り込む | `I` または `:SpiderImport path/to/chat.json` |
 | Spider を閉じる | `q` |
 
+送信すると質問がすぐ表示され、会話ペインの上部に応答待ちのアニメーション、経過時間、`x` で中止できることが表示されます。中止またはエラーになった質問は会話履歴に保存されず、`i` で下書きに戻れます。
+
 会話ペインは [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) で見出し・表・コードブロックなどを整形します。Neovim 内では既存のプラグイン設定を使います。単体の `spider` は `stdpath("data")/lazy/render-markdown.nvim` のプラグインだけを読み込み、別の場所にある場合は `SPIDER_MARKDOWN_RUNTIME` で指定できます。プラグインがない場合は Markdown の構文強調だけになります。装飾を切り替えても本文や引用位置は変わりません。
 
 マップは `~/Spider/maps/` に保存され、Markdown の既定の書き出し先は `~/Spider/` です。初回起動時に旧保存先（通常 `~/.local/share/spider-tui`）のマップをコピーします。元のデータは残ります。保存先を変更する場合は `SPIDER_DATA_DIR` を設定してください。

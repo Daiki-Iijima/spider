@@ -8,7 +8,9 @@ local backend = vim.fn.fnamemodify((vim.uv and vim.uv.fs_realpath(module_path)) 
   .. "/dist/spider-tui.cjs"
 local providers = { "codex", "claude", "omp" }
 local provider_labels = { codex = "Codex", claude = "Claude", omp = "omp" }
-local role_labels = { system = "システム", user = "ユーザー", assistant = "アシスタント" }
+local role_labels = { system = "会話の指示", user = "質問", assistant = "AI の回答" }
+local spinner = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+local frame_ms = 150
 local active
 
 local function label(text)
@@ -76,17 +78,38 @@ local function heading(buf, row)
   api.nvim_buf_set_extmark(buf, headings, row - 1, 0, { line_hl_group = "Title" })
 end
 
-local function status(session)
+local function draw_status(session)
   if not owns_window(session.transcript_win, session.transcript) then return end
   local state = session.state
   local provider = state and provider_labels[state.provider]
-  local activity = not session.job and "停止中"
-    or not state and "起動中"
-    or (session.pending or state.busy) and "応答待ち"
-    or session.waiting and "処理中"
-    or "待機中"
-  vim.wo[session.transcript_win].winbar = " Spider · " .. (provider and provider .. " · " or "") .. activity
-    .. " %=%<i 入力  Tab 分岐  S-Tab/h/← 親へ  → 子へ "
+  local activity, hint
+  if session.progress_started then
+    local ms = (vim.uv.hrtime() - session.progress_started) / 1e6
+    local frame = spinner[math.floor(ms / frame_ms) % #spinner + 1]
+    local phase = session.cancelling and "中止中" or "AI の応答待ち"
+    activity = "%#DiagnosticInfo#" .. frame .. " " .. phase .. (" · %d秒"):format(math.floor(ms / 1000)) .. "%*"
+    hint = session.cancelling and "" or " %=%<x で中止 "
+  else
+    activity = not session.job and "停止中" or not state and "起動中" or session.waiting and "処理中" or "待機中"
+    hint = " %=%<i 質問を書く  Tab 分岐  → 子へ "
+  end
+  vim.wo[session.transcript_win].winbar = " Spider · " .. (provider and provider .. " · " or "") .. activity .. hint
+end
+
+local function status(session)
+  local busy = session.job and session.state and (session.pending or session.state.busy)
+  if busy and not session.progress_timer then
+    session.progress_started = vim.uv.hrtime()
+    local timer = assert(vim.uv.new_timer())
+    session.progress_timer = timer
+    timer:start(frame_ms, frame_ms, vim.schedule_wrap(function()
+      if session.progress_timer == timer and live(session) then draw_status(session) end
+    end))
+  elseif not busy and session.progress_timer then
+    session.progress_timer:close()
+    session.progress_timer, session.progress_started, session.cancelling = nil, nil, nil
+  end
+  draw_status(session)
 end
 
 local function render_tree(session)
@@ -138,37 +161,55 @@ end
 local function render_transcript(session, scroll_end)
   local buf = session.transcript
   local node = session.state and session.state.node
-  local lines = { node and label(node.title) or "Spider を起動中…", "" }
-  local titles, blocks = { 1 }, {}
+  local prompt = session.pending and session.pending.text
+  local lines = { node and label(node.title) or "Spider を起動中…" }
+  if node and node.parentId then
+    lines[2] = node.sourceMessageId and "↳ 元の回答へ  Shift+Tab" or "↳ 親の会話へ  Shift+Tab"
+  end
+  lines[#lines + 1] = ""
+  local blocks, captions = {}, {}
   local last_message_line = 1
   if node then
-    if node.anchorText then
-      titles[#titles + 1] = #lines + 1
-      lines[#lines + 1] = "引用"
-      lines[#lines + 1] = ""
-      vim.list_extend(lines, vim.split(node.anchorText, "\n", { plain = true }))
+    if node.anchorText and vim.trim((node.anchorText:gsub("%s+", " "))) ~= node.title then
+      for _, line in ipairs(vim.split(node.anchorText, "\n", { plain = true })) do
+        lines[#lines + 1] = "> " .. line
+      end
       lines[#lines + 1] = ""
     end
     for _, message in ipairs(node.messages) do
-      titles[#titles + 1] = #lines + 1
-      lines[#lines + 1] = role_labels[message.role] or label(message.role)
-      lines[#lines + 1] = ""
+      local first = #lines + 1
       local body = vim.split(message.content, "\n", { plain = true })
-      blocks[message.id] = { first = #lines + 1, lines = body, message = message }
+      blocks[message.id] = { first = first, lines = body, message = message }
+      captions[first] = message.role
       vim.list_extend(lines, body)
       last_message_line = #lines
       lines[#lines + 1] = ""
     end
-    if #node.messages == 0 then
+    if prompt then
+      captions[#lines + 1] = "user"
+      vim.list_extend(lines, vim.split(prompt, "\n", { plain = true }))
+      last_message_line = #lines
+    elseif #node.messages == 0 then
       lines[#lines + 1] = node.parentId
-        and "この分岐にはまだ発言がありません。i で質問、Shift+Tab で親の会話へ。"
-        or "このマップにはまだ発言がありません。i で入力できます。"
+        and "この分岐はまだ始まっていません。i で質問できます。"
+        or "このマップにはまだ発言がありません。i で質問できます。"
     end
   end
   replace_lines(buf, lines)
   api.nvim_buf_clear_namespace(buf, sources, 0, -1)
-  for _, row in ipairs(titles) do heading(buf, row) end
+  heading(buf, 1)
+  if node and node.parentId then
+    api.nvim_buf_set_extmark(buf, headings, 1, 0, { line_hl_group = "Comment" })
+  end
+  -- Virtual captions keep headings out of the Markdown and source ranges.
+  for row, role in pairs(captions) do
+    api.nvim_buf_set_extmark(buf, headings, row - 1, 0, {
+      virt_lines = { { { role_labels[role] or label(role), role == "assistant" and "Title" or "DiagnosticInfo" } } },
+      virt_lines_above = true,
+    })
+  end
   session.blocks = blocks
+  session.shown_prompt = prompt
   if owns_window(session.transcript_win, buf) then
     api.nvim_win_set_cursor(session.transcript_win, { scroll_end and last_message_line or 1, 0 })
   end
@@ -217,7 +258,7 @@ end
 
 local function send(session, request)
   if request.op == "cancel" then
-    if not session.job or not (session.pending or (session.state and session.state.busy)) then return false end
+    if session.cancelling or not session.job or not (session.pending or (session.state and session.state.busy)) then return false end
   elseif not ready(session) then
     return false
   end
@@ -226,10 +267,12 @@ local function send(session, request)
     notify("バックエンドに送信できませんでした。", vim.log.levels.ERROR)
     return false
   end
-  if request.op ~= "cancel" then
+  if request.op == "cancel" then
+    session.cancelling = true
+  else
     session.waiting = replies[request.op]
-    status(session)
   end
+  status(session)
   return true
 end
 
@@ -279,8 +322,10 @@ local function compose(session)
     local text = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
     if not text:find("%S") then notify("送信する内容を入力してください。"); return end
     if not send(session, { op = "ask", text = text }) then return end
+    composer.text = vim.trim(text)
     session.pending = composer
     close_composer(session)
+    render_transcript(session, true)
     status(session)
   end, { buffer = buf, desc = "Spider の入力内容を送信" })
   api.nvim_win_set_cursor(win, { #lines, #lines[#lines] })
@@ -352,7 +397,7 @@ local function copy_history(session)
   local first, last
   for _, message in ipairs(node.messages) do
     local block = session.blocks[message.id]
-    if block.first - 2 <= last_row and block.first + #block.lines - 1 >= first_row then
+    if block.first <= last_row and block.first + #block.lines - 1 >= first_row then
       first = first or message.id
       last = message.id
     end
@@ -387,7 +432,9 @@ local function receive(session, event)
     session.state = event
     if not event.busy then session.pending = nil end
     if not same_node or old.map.title ~= event.map.title or not vim.deep_equal(old.tree, event.tree) then render_tree(session) end
-    if not same_node or not vim.deep_equal(old.node, event.node) then render_transcript(session, same_node) end
+    if not same_node or not vim.deep_equal(old.node, event.node) or session.shown_prompt ~= (session.pending and session.pending.text) then
+      render_transcript(session, same_node)
+    end
     if event.jump then show_source(session, event.jump) end
     local queued = session.startup_request
     if queued then
@@ -400,6 +447,7 @@ local function receive(session, event)
     session.pending = nil
   elseif event.type == "error" then
     session.pending = nil
+    if session.shown_prompt then render_transcript(session, true) end
     notify(event.message, vim.log.levels.ERROR)
   elseif event.type == "notice" then
     notify(event.message)
@@ -440,6 +488,7 @@ local function start(session, cwd)
       vim.schedule(function()
         if not live(session) or session.job ~= exited then return end
         session.job, session.pending, session.waiting = nil, nil, nil
+        if session.shown_prompt then render_transcript(session, true) end
         status(session)
         notify(("バックエンドが終了しました（終了コード %d）。Spider を開き直してください。"):format(code),
           vim.log.levels.ERROR, vim.trim(stderr))
@@ -585,10 +634,10 @@ local function ensure_panes(session)
 end
 
 local function stop(session)
-  if not session.job then return end
   local job = session.job
   session.job = nil
-  pcall(fn.jobstop, job)
+  status(session)
+  if job then pcall(fn.jobstop, job) end
 end
 
 function M.open()
