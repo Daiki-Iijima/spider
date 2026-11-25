@@ -6,13 +6,17 @@ local sources = api.nvim_create_namespace("spider.sources")
 local module_path = debug.getinfo(1, "S").source:sub(2)
 local backend = vim.fn.fnamemodify((vim.uv and vim.uv.fs_realpath(module_path)) or module_path, ":p:h:h:h")
   .. "/dist/spider-tui.cjs"
+local providers = { "codex", "claude", "omp" }
+local provider_labels = { codex = "Codex", claude = "Claude", omp = "omp" }
+local role_labels = { system = "システム", user = "ユーザー", assistant = "アシスタント" }
 local active
 
 local function label(text)
   return (text:gsub("[%c]+", " "))
 end
 
-local function notify(text, level)
+local function notify(text, level, detail)
+  if detail and detail ~= "" then text = text .. " " .. tostring(detail) end
   vim.notify("Spider: " .. label(text), level or vim.log.levels.INFO)
 end
 
@@ -64,23 +68,27 @@ end
 local function status(session)
   if not owns_window(session.transcript_win, session.transcript) then return end
   local state = session.state
-  local provider = state and (state.provider == "claude" and "Claude" or "Codex")
-  local activity = not session.job and "backend stopped"
-    or not state and "starting"
-    or (session.pending or state.busy) and "waiting for reply"
-    or session.waiting and "working"
-    or "ready"
+  local provider = state and provider_labels[state.provider]
+  local activity = not session.job and "停止中"
+    or not state and "起動中"
+    or (session.pending or state.busy) and "応答待ち"
+    or session.waiting and "処理中"
+    or "待機中"
   vim.wo[session.transcript_win].winbar = " Spider · " .. (provider and provider .. " · " or "") .. activity
-    .. " %=%<i compose  Tab branch  S-Tab/h/← parent  → child "
+    .. " %=%<i 入力  Tab 分岐  S-Tab/h/← 親へ  → 子へ "
 end
 
 local function render_tree(session)
   local state = session.state
   local lines = {
     state and label(state.map.title) or "Spider",
-    "Enter select · C-w w switch",
-    "m maps · n new · I import · e export",
-    "p provider · x cancel · q close",
+    "Enter 分岐を開く",
+    "C-w w 画面を切替",
+    "m 一覧 / n 新規",
+    "I 取り込み",
+    "e 書き出し",
+    "p 接続先",
+    "x 中止 / q 終了",
     "",
   }
   local ids, selected = {}, nil
@@ -108,26 +116,26 @@ end
 local function render_transcript(session, scroll_end)
   local buf = session.transcript
   local node = session.state and session.state.node
-  local lines = { node and label(node.title) or "Starting Spider…", "" }
+  local lines = { node and label(node.title) or "Spider を起動中…", "" }
   local titles, blocks = { 1 }, {}
   local last_message_line = 1
   if node then
     if node.anchorText then
       titles[#titles + 1] = #lines + 1
-      lines[#lines + 1] = "Anchor"
+      lines[#lines + 1] = "引用"
       vim.list_extend(lines, vim.split(node.anchorText, "\n", { plain = true }))
       lines[#lines + 1] = ""
     end
     for _, message in ipairs(node.messages) do
       titles[#titles + 1] = #lines + 1
-      lines[#lines + 1] = message.role == "assistant" and "Assistant" or label(message.role)
+      lines[#lines + 1] = role_labels[message.role] or label(message.role)
       local body = vim.split(message.content, "\n", { plain = true })
       blocks[message.id] = { first = #lines + 1, lines = body, message = message }
       vim.list_extend(lines, body)
       last_message_line = #lines
       lines[#lines + 1] = ""
     end
-    if #node.messages == 0 then lines[#lines + 1] = "No messages. Press i to write a prompt." end
+    if #node.messages == 0 then lines[#lines + 1] = "まだ会話がありません。i で入力できます。" end
   end
   replace_lines(buf, lines)
   api.nvim_buf_clear_namespace(buf, sources, 0, -1)
@@ -170,10 +178,10 @@ local replies = {
 }
 
 local function ready(session)
-  if not live(session) or not session.job then notify("Backend is not running.")
-  elseif not session.state then notify("Backend is still starting.")
-  elseif session.pending or session.state.busy then notify("Wait for the reply or press x to cancel.")
-  elseif session.waiting then notify("Wait for the current action to finish.")
+  if not live(session) or not session.job then notify("バックエンドが起動していません。")
+  elseif not session.state then notify("バックエンドを起動中です。")
+  elseif session.pending or session.state.busy then notify("応答を待つか、x で中止してください。")
+  elseif session.waiting then notify("処理が終わるまでお待ちください。")
   else return true end
   return false
 end
@@ -186,7 +194,7 @@ local function send(session, request)
   end
   local ok, bytes = pcall(fn.chansend, session.job, vim.json.encode(request) .. "\n")
   if not ok or bytes == 0 then
-    notify("Could not send to the backend.", vim.log.levels.ERROR)
+    notify("バックエンドに送信できませんでした。", vim.log.levels.ERROR)
     return false
   end
   if request.op ~= "cancel" then
@@ -221,13 +229,13 @@ local function compose(session)
   local ok, win = pcall(api.nvim_open_win, buf, true, { split = "below", win = base, height = 8 })
   if not ok then
     api.nvim_buf_delete(buf, { force = true })
-    notify(win, vim.log.levels.ERROR)
+    notify("入力欄を開けませんでした。", vim.log.levels.ERROR, win)
     return
   end
   local composer = { buf = buf, win = win, drafts = drafts, node = node }
   session.composer = composer
   configure(win, false)
-  vim.wo[win].winbar = " Spider prompt · Esc then Enter to send · q keeps draft "
+  vim.wo[win].winbar = " Spider 入力 · Esc → Enter で送信 · q で下書き保存 "
   api.nvim_create_autocmd("BufWinLeave", {
     buffer = buf,
     callback = function()
@@ -237,15 +245,15 @@ local function compose(session)
       session.composer = nil
     end,
   })
-  vim.keymap.set("n", "q", function() close_composer(session) end, { buffer = buf, desc = "Keep Spider draft" })
+  vim.keymap.set("n", "q", function() close_composer(session) end, { buffer = buf, desc = "Spider の下書きを残して閉じる" })
   vim.keymap.set("n", "<CR>", function()
     local text = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
-    if not text:find("%S") then notify("Write a prompt before submitting."); return end
+    if not text:find("%S") then notify("送信する内容を入力してください。"); return end
     if not send(session, { op = "ask", text = text }) then return end
     session.pending = composer
     close_composer(session)
     status(session)
-  end, { buffer = buf, desc = "Submit Spider prompt" })
+  end, { buffer = buf, desc = "Spider の入力内容を送信" })
   api.nvim_win_set_cursor(win, { #lines, #lines[#lines] })
   vim.cmd.startinsert({ bang = true })
 end
@@ -253,7 +261,7 @@ end
 local function visual_branch(session)
   local kind = fn.mode()
   if kind ~= "v" and kind ~= "V" then
-    notify("Use a characterwise or linewise selection inside one assistant reply.")
+    notify("1 件の応答内で、文字単位または行単位で選択してください。")
     return
   end
   local a, b = fn.getpos("v"), fn.getpos(".")
@@ -273,7 +281,7 @@ local function visual_branch(session)
           local text = selected[segment]
           -- getregion returns the whole final UTF-8 character, not just its first byte.
           if col < 0 or col > #line or not text or line:sub(col + 1, col + #text) ~= text then
-            notify("Select actual reply text, not virtual columns.")
+            notify("行末の外側は含めず、応答の本文を選択してください。")
             return
           end
           start_byte = start_byte or (line_start + col)
@@ -296,7 +304,7 @@ local function visual_branch(session)
       end
     end
   end
-  notify("Select non-empty text inside one assistant reply.")
+  notify("1 件の応答内で、空白以外の文字を選択してください。")
 end
 
 local function visible(session)
@@ -329,7 +337,7 @@ local function receive(session, event)
   elseif event.type == "notice" then
     notify(event.message)
   elseif event.type == "maps" and visible(session) then
-    vim.ui.select(event.maps, { prompt = "Spider map:", format_item = function(item) return label(item.title) end }, function(item)
+    vim.ui.select(event.maps, { prompt = "Spider マップを選択：", format_item = function(item) return label(item.title) end }, function(item)
       if item and visible(session) then send(session, { op = "open", id = item.id }) end
     end)
   end
@@ -353,7 +361,7 @@ local function start(session, cwd)
           if ok and type(event) == "table" then
             receive(session, event)
           else
-            notify("Invalid JSON from the backend.", vim.log.levels.ERROR)
+            notify("バックエンドから不正な JSON を受信しました。", vim.log.levels.ERROR)
           end
         end)
       end
@@ -366,15 +374,15 @@ local function start(session, cwd)
         if not live(session) or session.job ~= exited then return end
         session.job, session.pending, session.waiting = nil, nil, nil
         status(session)
-        local detail = vim.trim(stderr)
-        notify("Backend exited (" .. code .. "). Close and reopen Spider to restart. " .. detail, vim.log.levels.ERROR)
+        notify(("バックエンドが終了しました（終了コード %d）。Spider を開き直してください。"):format(code),
+          vim.log.levels.ERROR, vim.trim(stderr))
       end)
     end,
   })
   if ok and job > 0 then
     session.job = job
   else
-    notify(ok and "Could not start Node.js." or job, vim.log.levels.ERROR)
+    notify("Node.js を起動できませんでした。", vim.log.levels.ERROR, not ok and job)
   end
   status(session)
 end
@@ -386,39 +394,46 @@ local function bind(session, buf)
   local function parent()
     if session.state and session.state.node.parentId then send(session, { op = "parent" }) end
   end
-  local function input(prompt, completion, request)
+  local function input(prompt, completion, request, default)
     if not ready(session) then return end
-    vim.ui.input({ prompt = prompt, completion = completion }, function(value)
+    vim.ui.input({ prompt = prompt, completion = completion, default = default }, function(value)
       if value and visible(session) then send(session, request(value)) end
     end)
   end
-  key("<Tab>", function() send(session, { op = "branch" }) end, "Create blank Spider branch")
-  key("<S-Tab>", parent, "Go to Spider parent")
-  key("<Left>", parent, "Go to Spider parent")
-  key("h", parent, "Go to Spider parent")
+  key("<Tab>", function() send(session, { op = "branch" }) end, "Spider に空の分岐を作成")
+  key("<S-Tab>", parent, "Spider の親分岐に移動")
+  key("<Left>", parent, "Spider の親分岐に移動")
+  key("h", parent, "Spider の親分岐に移動")
   key("<Right>", function()
     local child = session.state and session.state.node.children[1]
     if child then send(session, { op = "goto", id = child }) end
-  end, "Go to first Spider child")
-  key("i", function() compose(session) end, "Compose Spider prompt")
+  end, "Spider の最初の子分岐に移動")
+  key("i", function() compose(session) end, "Spider へのメッセージを入力")
   key("p", function()
-    if session.state then
-      send(session, { op = "provider", provider = session.state.provider == "codex" and "claude" or "codex" })
-    end
-  end, "Switch Spider provider")
-  key("m", function() send(session, { op = "maps" }) end, "Choose Spider map")
+    if not visible(session) or not ready(session) then return end
+    vim.ui.select(providers, {
+      prompt = "AI の接続先を選択：",
+      format_item = function(provider) return provider_labels[provider] end,
+    }, function(provider)
+      if provider and visible(session) then send(session, { op = "provider", provider = provider }) end
+    end)
+  end, "Spider の AI 接続先を選択")
+  key("m", function() send(session, { op = "maps" }) end, "Spider マップを選択")
   key("n", function()
-    input("New Spider map title: ", nil, function(title) return { op = "new", title = title } end)
-  end, "Create Spider map")
+    input("新しい Spider マップの名前：", nil, function(title) return { op = "new", title = title } end)
+  end, "Spider マップを作成")
   key("I", function()
-    input("Import Spider conversation from: ", "file", function(path)
+    input("取り込む会話ファイル：", "file", function(path)
       return { op = "import", path = fn.fnamemodify(path, ":p") }
     end)
-  end, "Import Spider conversation")
+  end, "会話を Spider に取り込み")
   key("e", function()
-    input("Export Spider map to: ", "file", function(path) return { op = "export", path = path } end)
-  end, "Export Spider map")
-  key("x", function() send(session, { op = "cancel" }) end, "Cancel Spider request")
+    local workspace = session.state and session.state.workspace
+    input("マップの書き出し先：", "file", function(path)
+      return { op = "export", path = path }
+    end, workspace and workspace .. "/")
+  end, "Spider マップを書き出し")
+  key("x", function() send(session, { op = "cancel" }) end, "Spider へのリクエストを中止")
   key("q", function()
     if not live(session) then return end
     local ok, err
@@ -428,15 +443,15 @@ local function bind(session, buf)
       if #api.nvim_list_tabpages() == 1 then vim.cmd.tabnew() end
       ok, err = pcall(vim.cmd, api.nvim_tabpage_get_number(session.tab) .. "tabclose")
     end
-    if not ok then notify(err, vim.log.levels.ERROR) end
-  end, "Close Spider tab")
+    if not ok then notify("Spider を閉じられませんでした。", vim.log.levels.ERROR, err) end
+  end, "Spider を閉じる")
   if buf == session.tree then
     key("<CR>", function()
       local id = session.tree_ids[api.nvim_win_get_cursor(0)[1]]
       if id then send(session, { op = "goto", id = id }) end
-    end, "Go to Spider branch")
+    end, "Spider の分岐に移動")
   else
-    vim.keymap.set("x", "<Tab>", function() visual_branch(session) end, { buffer = buf, desc = "Branch from Spider reply" })
+    vim.keymap.set("x", "<Tab>", function() visual_branch(session) end, { buffer = buf, desc = "Spider の応答を引用して分岐" })
   end
 end
 
@@ -466,17 +481,17 @@ end
 
 function M.open()
   if fn.has("nvim-0.11") ~= 1 then
-    notify("Neovim 0.11 or newer is required.", vim.log.levels.ERROR)
+    notify("Neovim 0.11 以降が必要です。", vim.log.levels.ERROR)
     return
   end
   if active and live(active) then
     if api.nvim_get_current_tabpage() ~= active.tab then api.nvim_set_current_tabpage(active.tab) end
     local ok, err = pcall(ensure_panes, active)
-    if not ok then notify(err, vim.log.levels.ERROR) end
+    if not ok then notify("Spider のペインを開けませんでした。", vim.log.levels.ERROR, err) end
     return active
   end
   if fn.filereadable(backend) ~= 1 or fn.executable("node") ~= 1 then
-    notify("Spider requires Node.js and the built dist/spider-tui.cjs.", vim.log.levels.ERROR)
+    notify("Node.js とビルド済みの dist/spider-tui.cjs が必要です。", vim.log.levels.ERROR)
     return
   end
   local cwd = fn.getcwd()
@@ -485,7 +500,7 @@ function M.open()
   if not opened then
     api.nvim_buf_delete(session.transcript, { force = true })
     api.nvim_buf_delete(session.tree, { force = true })
-    notify(err, vim.log.levels.ERROR)
+    notify("Spider のタブを開けませんでした。", vim.log.levels.ERROR, err)
     return
   end
   session.tab = api.nvim_get_current_tabpage()
@@ -508,7 +523,7 @@ function M.open()
   end })
   api.nvim_create_autocmd("VimLeavePre", { group = group, callback = function() stop(session) end })
   local panes_ok, panes_error = pcall(ensure_panes, session)
-  if not panes_ok then notify(panes_error, vim.log.levels.ERROR) end
+  if not panes_ok then notify("Spider のペインを開けませんでした。", vim.log.levels.ERROR, panes_error) end
   start(session, cwd)
   return session
 end
@@ -530,11 +545,11 @@ end
 function M.branch(first, last)
   local buf = api.nvim_get_current_buf()
   if active and (buf == active.tree or buf == active.transcript or (active.composer and buf == active.composer.buf)) then
-    notify("Use Tab in Spider to branch from a reply.")
+    notify("応答を引用して分岐するには、Spider で選択して Tab を押してください。")
     return
   end
   local anchor = table.concat(api.nvim_buf_get_lines(buf, first - 1, last, true), "\n")
-  if not anchor:find("%S") then notify("Select non-empty editor lines to quote."); return end
+  if not anchor:find("%S") then notify("引用するには、空白以外の文字を含む行を選択してください。"); return end
   open_with_request({ op = "branch", anchor = anchor })
 end
 

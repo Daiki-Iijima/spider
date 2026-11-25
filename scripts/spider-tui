@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+root=$(CDPATH= cd -- "$(dirname -- "$(realpath -- "$0")")/.." && pwd -P)
 if [ ! -f "$root/dist/spider-tui.cjs" ]; then
-  printf 'Build Spider first: cd "%s" && npm ci && npm run build:tui\n' "$root" >&2
+  printf '先に Spider をビルドしてください: cd "%s" && npm ci && npm run build:tui\n' "$root" >&2
   exit 1
 fi
 

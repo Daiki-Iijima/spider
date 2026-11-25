@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -20,8 +20,9 @@ type Request =
   | { op: "import"; path: string }
   | { op: "export"; path: string };
 
-const defaultTitle = "Untitled map";
-const dataDir = process.env.SPIDER_DATA_DIR || join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "spider-tui");
+const defaultTitle = "無題のマップ";
+const dataOverride = process.env.SPIDER_DATA_DIR;
+const dataDir = resolve(dataOverride || join(homedir(), "Spider"));
 const mapsDir = join(dataDir, "maps");
 const sessionPath = join(dataDir, "session.json");
 const validId = /^map_[a-z\d_-]+$/i;
@@ -40,7 +41,7 @@ function writeJson(path: string, value: unknown): string {
 }
 
 function mapPath(id: string): string {
-  if (!validId.test(id)) throw new Error("Invalid map ID.");
+  if (!validId.test(id)) throw new Error("マップ ID が無効です。");
   return join(mapsDir, `${id}.json`);
 }
 
@@ -48,7 +49,7 @@ function readMap(id: string): { map: ChatMap; version: string } {
   const version = readFileSync(mapPath(id), "utf8");
   const map: unknown = JSON.parse(version);
   if (!isChatMap(map) || map.id !== id || !map.nodes[map.rootNodeId]) {
-    throw new Error(`Invalid Spider map: ${id}`);
+    throw new Error(`マップの形式が無効です: ${id}`);
   }
   return { map, version };
 }
@@ -72,16 +73,16 @@ function importConversation(path: string): ChatMap {
   try {
     data = JSON.parse(json);
   } catch {
-    throw new Error("Invalid JSON. Save just the JSON object, without Markdown fences.");
+    throw new Error("JSON が無効です。コードフェンスを除き、JSON 本体だけを保存してください。");
   }
   if (data?.format !== "spider-chat-v1" || typeof data.title !== "string" || !data.title.trim()
     || !Array.isArray(data.messages) || data.messages.length === 0) {
-    throw new Error('Expected format "spider-chat-v1", a non-empty title, and at least one message.');
+    throw new Error('format に "spider-chat-v1"、title にタイトル、messages に発言を1件以上指定してください。');
   }
   const messages = data.messages.map((message: { role?: unknown; content?: unknown } | null, index) => {
     if ((message?.role !== "user" && message?.role !== "assistant")
       || typeof message.content !== "string" || !message.content.trim()) {
-      throw new Error(`Message ${index + 1} must have role "user" or "assistant" and non-empty content.`);
+      throw new Error(`${index + 1}件目の発言に role ("user" または "assistant") と本文 (content) が必要です。`);
     }
     return createMessage(message.role, text(message.content));
   });
@@ -91,13 +92,24 @@ function importConversation(path: string): ChatMap {
 }
 
 function run(): void {
+  if (!dataOverride && !existsSync(mapsDir)) {
+    const legacy = join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "spider-tui");
+    const oldMaps = join(legacy, "maps");
+    if (existsSync(oldMaps)) {
+      mkdirSync(dataDir, { mode: 0o700, recursive: true });
+      if (existsSync(join(legacy, "session.json")) && !existsSync(sessionPath)) {
+        copyFileSync(join(legacy, "session.json"), sessionPath, constants.COPYFILE_EXCL);
+      }
+      cpSync(oldMaps, mapsDir, { recursive: true, force: false });
+    }
+  }
   mkdirSync(mapsDir, { mode: 0o700, recursive: true });
   const session = readSession();
-  let provider: Provider = session.provider === "claude" ? "claude" : "codex";
+  let provider: Provider = session.provider === "claude" || session.provider === "omp" ? session.provider : "codex";
   let { map, version } = session.mapId && validId.test(session.mapId) && existsSync(mapPath(session.mapId))
     ? readMap(session.mapId)
     : (() => {
-        const map = createRootMap(defaultTitle);
+        const map = createRootMap(defaultTitle, "最初の質問");
         return { map, version: writeJson(mapPath(map.id), map) };
       })();
   let nodeId = session.nodeId && Object.hasOwn(map.nodes, session.nodeId) ? session.nodeId : map.rootNodeId;
@@ -115,7 +127,7 @@ function run(): void {
   function save(next: ChatMap): void {
     const path = mapPath(next.id);
     if (next.id === map.id && readFileSync(path, "utf8") !== version) {
-      throw new Error("Map was changed in another Spider window. Reopen it before editing.");
+      throw new Error("別の Spider 画面でマップが更新されました。開き直してから編集してください。");
     }
     version = writeJson(path, next);
     map = next;
@@ -135,11 +147,11 @@ function run(): void {
         stack.push({ id: node.children[i]!, depth: depth + 1 });
       }
     }
-    emit({ type: "state", map: { id: map.id, title: map.title }, tree, node: current(), provider, busy: Boolean(pending), jump });
+    emit({ type: "state", map: { id: map.id, title: map.title }, workspace: dataDir, tree, node: current(), provider, busy: Boolean(pending), jump });
   }
 
   function select(id: string, jump?: BranchSource): void {
-    if (!Object.hasOwn(map.nodes, id)) throw new Error("Unknown branch.");
+    if (!Object.hasOwn(map.nodes, id)) throw new Error("指定された分岐が見つかりません。");
     nodeId = id;
     saveSession();
     state(jump);
@@ -147,7 +159,7 @@ function run(): void {
 
   async function ask(input: string): Promise<void> {
     const question = text(input).trim();
-    if (!question) throw new Error("Write a question before submitting.");
+    if (!question) throw new Error("質問を入力してから送信してください。");
     const node = current();
     const parent = node.parentId && map.nodes[node.parentId];
     const prompt = [
@@ -185,11 +197,11 @@ function run(): void {
     if (request.op === "cancel") {
       if (pending && !pending.signal.aborted) {
         pending.abort();
-        emit({ type: "notice", message: "Request cancelled." });
+        emit({ type: "notice", message: "送信を中止しました。" });
       }
       return;
     }
-    if (pending) throw new Error("Wait for the reply or press x to cancel.");
+    if (pending) throw new Error("応答を待つか、x で送信を中止してください。");
     switch (request.op) {
       case "goto":
         select(request.id);
@@ -207,12 +219,12 @@ function run(): void {
         if (source) {
           const message = current().messages.find(({ id }) => id === source.messageId);
           if (!isSourceTextRange(source) || message?.role !== "assistant" || source.end > message.content.length) {
-            throw new Error("Select text inside one assistant reply.");
+            throw new Error("1つの回答内のテキストを選択してください。");
           }
           anchor = message.content.slice(source.start, source.end);
         }
-        if (anchor !== undefined && !anchor.trim()) throw new Error("Select non-empty text to quote.");
-        const branch = addChildNode(map, nodeId, { anchorText: anchor, source });
+        if (anchor !== undefined && !anchor.trim()) throw new Error("引用するテキストを選択してください。");
+        const branch = addChildNode(map, nodeId, { anchorText: anchor, source, title: anchor === undefined ? "無題の分岐" : undefined });
         save(anchor === undefined ? branch.map : updateNode(branch.map, branch.child.id, { anchorText: anchor }));
         select(branch.child.id);
         return;
@@ -221,7 +233,9 @@ function run(): void {
         await ask(request.text);
         return;
       case "provider":
-        if (request.provider !== "claude" && request.provider !== "codex") throw new Error("Unknown provider.");
+        if (request.provider !== "claude" && request.provider !== "codex" && request.provider !== "omp") {
+          throw new Error("指定された接続先は使えません。");
+        }
         provider = request.provider;
         saveSession();
         state();
@@ -240,7 +254,7 @@ function run(): void {
         select(map.rootNodeId);
         return;
       case "new":
-        save(createRootMap(truncateText(request.title, 120) || defaultTitle));
+        save(createRootMap(truncateText(request.title, 120) || defaultTitle, "最初の質問"));
         select(map.rootNodeId);
         return;
       case "import": {
@@ -250,14 +264,14 @@ function run(): void {
         return;
       }
       case "export": {
-        if (!request.path.trim()) throw new Error("Enter a Markdown file path.");
-        const path = resolve(request.path);
+        if (!request.path.trim()) throw new Error("Markdown の保存先を入力してください。");
+        const path = resolve(dataDir, request.path);
         writeFileSync(path, exportMarkdown(map, "en"), { flag: "wx", mode: 0o600 });
-        emit({ type: "notice", message: `Exported ${path}` });
+        emit({ type: "notice", message: `書き出しました: ${path}` });
         return;
       }
       default:
-        throw new Error("Unknown Spider request.");
+        throw new Error("未対応の操作です。");
     }
   }
 

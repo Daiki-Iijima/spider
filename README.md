@@ -20,7 +20,7 @@ An Obsidian plugin that turns ChatGPT / Claude / DeepSeek / any OpenAI-compatibl
 
 ## Spider TUI / Neovim
 
-This fork also runs Spider in a terminal without Obsidian. The terminal app uses Neovim (0.11+) as its interface and Node.js (22+) as its backend. Build and launch from this checkout:
+このフォークは Obsidian なしでも使えます。端末 UI に Neovim 0.11 以上、バックエンドに Node.js 22 以上が必要です。このリポジトリでビルドしてください。
 
 ```sh
 npm ci
@@ -28,34 +28,51 @@ npm run build:tui
 npm run tui
 ```
 
-Install an up-to-date [Codex CLI](https://developers.openai.com/codex/auth) or [Claude Code CLI](https://code.claude.com/docs/en/quickstart) on `PATH`. To use your subscription, sign in with `codex login` (choose ChatGPT) or `claude auth login --claudeai` (choose your Claude subscription). Spider uses the official CLI's saved login; it does not copy credentials or fall back to an API key. Usage counts against your provider's plan and any account-level overage settings.
+シェルから `spider` で起動するには、このリポジトリのディレクトリで次を実行します。`~/.local/bin` を `PATH` に含めてください。
 
-To open Spider inside your existing editor, add this local spec to lazy.nvim and run `:Spider`:
+```sh
+mkdir -p ~/.local/bin
+ln -s "$PWD/scripts/spider-tui" ~/.local/bin/spider
+```
+
+`p` で AI の接続先を選びます。
+
+| 接続先 | 準備 |
+|---|---|
+| Codex | [Codex CLI](https://developers.openai.com/codex/auth) をインストールし、`codex login` で ChatGPT アカウントにログイン |
+| Claude | [Claude Code CLI](https://code.claude.com/docs/en/quickstart) をインストールし、`claude auth login --claudeai` で Claude のサブスクリプションにログイン |
+| omp | [omp](https://github.com/can1357/oh-my-pi) をインストールし、`omp login` で使う接続先にログイン。omp のプロファイルと既定モデルを使用。モデルだけ変えるなら `SPIDER_OMP_MODEL=プロバイダー/モデル spider` |
+
+Codex と Claude を直接選んだときは API キーに切り替えません。omp を選んだときの利用枠と課金は、omp が使う接続先と認証に従います。omp は ACP で起動し、組み込みツール・拡張・MCP サーバーは使いません。
+
+既存の Neovim 内で使う場合は、lazy.nvim に次の設定を追加し、`:Spider` を実行します。
 
 ```lua
 return {
-  dir = vim.fn.expand("~/Projects/spider"), -- use the path to your built checkout
+  dir = vim.fn.expand("~/Projects/spider"), -- ビルドしたリポジトリの場所
   cmd = { "Spider", "SpiderBranch", "SpiderImport" },
 }
 ```
 
-| Action | Key or command |
+| 操作 | キー・コマンド |
 |---|---|
-| Write a prompt | `i`, then `Esc` and `Enter` to send; `q` keeps the current draft |
-| Branch from a reply | Select reply text in Visual mode, then `Tab`; normal-mode `Tab` starts an empty branch |
-| Return to the quoted source | `Shift+Tab` or `←`; `→` visits the first child |
-| Quote code or prose from an editor buffer | Select lines, then `:'<,'>SpiderBranch` |
-| Choose a branch in the tree | `Ctrl+w w` to focus the tree, then `Enter` on the branch |
-| Switch provider or cancel a request | `p` or `x` |
-| Open, create, or export a map to Markdown | `m`, `n`, or `e` |
-| Import a conversation as a new map | `I` or `:SpiderImport path/to/chat.json` |
-| Close Spider | `q` |
+| 質問を書く | `i` で入力、`Esc` → `Enter` で送信。`q` で下書きを残して閉じる |
+| 回答から分岐する | ビジュアルモードで回答を選んで `Tab`。選択せずに押すと空の分岐 |
+| 引用元に戻る／最初の子へ移る | `Shift+Tab` または `←`／`→` |
+| 編集中のコードや文章を引用する | 行を選んで `:'<,'>SpiderBranch` |
+| ツリーから分岐を開く | `Ctrl+w w` でツリーに移動し、対象行で `Enter` |
+| AI の接続先を選ぶ／送信を中止する | `p`／`x` |
+| マップ一覧／新規作成／Markdown 書き出し | `m`／`n`／`e` |
+| 会話を新しいマップとして取り込む | `I` または `:SpiderImport path/to/chat.json` |
+| Spider を閉じる | `q` |
 
-Selecting or branching does not send anything. Submitting a prompt sends the current branch history, its quote (if any), and the parent topic, not your open buffers or working directory. Provider commands run in a temporary directory with tool access restricted; system and organization policies still apply. Maps are stored in `$XDG_DATA_HOME/spider-tui` (usually `~/.local/share/spider-tui`), separately from Obsidian. Override the location with `SPIDER_DATA_DIR`.
+マップは `~/Spider/maps/` に保存され、Markdown の既定の書き出し先は `~/Spider/` です。初回起動時に旧保存先（通常 `~/.local/share/spider-tui`）のマップをコピーします。元のデータは残ります。保存先を変更する場合は `SPIDER_DATA_DIR` を設定してください。
+
+取り込み・テキスト選択・分岐だけでは外部に送信しません。質問を送信したときに、その分岐の履歴、引用、親トピックが選んだ接続先に渡ります。
 
 ### Import a ChatGPT conversation
 
-Paste the prompt below into the **ChatGPT conversation you want to bring over**. Save the returned JSON object (not the surrounding Markdown) as a UTF-8 file, for example `chat.json`, then run `:SpiderImport ~/Downloads/chat.json` or press `I` in Spider.
+移したい **ChatGPT の会話**に下の指示文を貼ります。返ってきた JSON 本体を UTF-8 の `chat.json` に保存し、`:SpiderImport ~/Downloads/chat.json` または Spider の `I` で取り込みます。
 
 ```text
 このチャットで、この依頼より前に交わした会話を Spider に移したいです。
@@ -67,7 +84,7 @@ Paste the prompt below into the **ChatGPT conversation you want to bring over**.
 {"format":"spider-chat-v1","title":"会話を表す短いタイトル","messages":[{"role":"user","content":"発言本文"},{"role":"assistant","content":"回答本文"}]}
 ```
 
-The messages are imported in array order into the root of a new local map. Importing does not call the AI or replace existing maps; submitting a follow-up at the root sends the imported history to the selected provider. ChatGPT may not be able to reproduce a long conversation in full. Check the exported text against the original; attachments and tool results aren't part of this format.
+発言は元の順序で新しいマップのルートに入ります。長い会話では ChatGPT が古い発言を再現できない場合があるため、元のチャットと照らし合わせてください。添付ファイルやツール結果はこの形式の対象外です。
 
 ---
 
