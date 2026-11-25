@@ -28,6 +28,7 @@ export interface ChatNode {
   anchorText?: string;
   sourceMessageId?: MessageId;
   sourceTextRange?: { start: number; end: number };
+  contextMode?: "snapshot";
   messages: ChatMessage[];
   summary?: string;
   note?: string;

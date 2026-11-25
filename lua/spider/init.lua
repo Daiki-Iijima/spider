@@ -306,7 +306,11 @@ local function render_transcript(session, scroll_end)
   local prompt = session.pending and session.pending.text
   local lines = { node and label(node.title) or "Spider を起動中…" }
   if node and node.parentId then
-    lines[2] = node.sourceMessageId and "↳ 元の回答へ  Shift+Tab" or "↳ 親の会話へ  Shift+Tab"
+    if node.contextMode == "snapshot" and node.sourceMessageId then
+      lines[2] = "↳ 分岐した行へ  Shift+Tab"
+    else
+      lines[2] = node.sourceMessageId and "↳ 元の回答へ  Shift+Tab" or "↳ 親の会話へ  Shift+Tab"
+    end
   end
   lines[#lines + 1] = ""
   local blocks, captions, figures = {}, {}, {}
@@ -384,7 +388,7 @@ end
 
 local replies = {
   ["goto"] = "state", parent = "state", branch = "state", provider = "state",
-  ["copy-history"] = "state",
+  fork = "state", ["copy-history"] = "state",
   maps = "maps", open = "state", new = "state", import = "state", export = "notice",
 }
 
@@ -543,6 +547,24 @@ local function compose(session)
   vim.cmd.startinsert({ bang = true })
 end
 
+local function fork_here(session)
+  if not ready(session) then return end
+  local row = api.nvim_win_get_cursor(0)[1]
+  local through
+  for _, message in ipairs(session.state.node.messages) do
+    local block = session.blocks[message.id]
+    if row < block.first then break end
+    through = block
+    if row < block.first + #block.lines then break end
+  end
+  if not through then
+    notify("分岐したい発言の行にカーソルを置いてください。")
+    return
+  end
+  local line = math.min(row - through.first, #through.lines - 1)
+  send(session, { op = "fork", messageId = through.message.id, line = line })
+end
+
 local function visual_branch(session)
   local kind = fn.mode()
   if kind ~= "v" and kind ~= "V" then
@@ -646,14 +668,14 @@ local function receive(session, event)
     if not same_node or old.map.title ~= event.map.title or not vim.deep_equal(old.tree, event.tree) then render_tree(session) end
     if not same_node or not vim.deep_equal(old.node, event.node) or not vim.deep_equal(old.branchSources, event.branchSources)
       or session.shown_prompt ~= (session.pending and session.pending.text) then
-      render_transcript(session, same_node)
+      render_transcript(session, same_node or completed == "fork")
     end
     if event.jump then show_source(session, event.jump) end
     local queued = session.startup_request
     if queued then
       session.startup_request = nil
       send(session, queued)
-    elseif completed == "branch" and visible(session) and old and event.node.parentId == old.node.id then
+    elseif (completed == "branch" or completed == "fork") and visible(session) and old and event.node.parentId == old.node.id then
       if owns_window(session.graph_win, session.tree) then api.nvim_win_close(session.graph_win, true) end
       compose(session)
     end
@@ -808,6 +830,7 @@ local function bind(session, buf)
       if owns_window(session.transcript_win, session.transcript) then api.nvim_set_current_win(session.transcript_win) end
     end, "Spider の分岐に移動")
   else
+    key(command_prefix .. "f", function() fork_here(session) end, "カーソル行までの会話を引き継いで分岐")
     vim.keymap.set("x", "<Tab>", function() visual_branch(session) end, { buffer = buf, desc = "Spider の応答を引用して分岐" })
     vim.keymap.set("x", command_prefix .. "h", function() copy_history(session) end,
       { buffer = buf, desc = "選択した会話を空の子分岐にコピー" })

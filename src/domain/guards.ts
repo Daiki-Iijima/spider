@@ -47,6 +47,7 @@ export function isChatNode(value: unknown): value is ChatNode {
     (value.anchorText === undefined || isString(value.anchorText)) &&
     (value.sourceMessageId === undefined || isString(value.sourceMessageId)) &&
     (value.sourceTextRange === undefined || isSourceTextRange(value.sourceTextRange)) &&
+    (value.contextMode === undefined || value.contextMode === "snapshot") &&
     Array.isArray(value.messages) &&
     value.messages.every(isChatMessage) &&
     (value.summary === undefined || isString(value.summary)) &&
