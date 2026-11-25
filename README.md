@@ -54,24 +54,37 @@ return {
 }
 ```
 
+Spider の `Space` → `?` で操作一覧を開きます（既存の Neovim では `<leader>?`）。左のサイドバーは分岐ツリーだけを表示します。
+
+<!-- spider-keys:start -->
 | 操作 | キー・コマンド |
 |---|---|
-| 質問を書く | `i` で入力、`Esc` → `Enter` で送信。`q` で下書きを残して閉じる |
-| 回答から分岐する | ビジュアルモードで回答を選んで `Tab`。選択せずに押すと空の分岐。どちらもすぐ質問を入力できる |
-| 過去の発言を空の子分岐にコピーする | 親の会話で `V` で範囲を選び、`H` でコピー先を選ぶ。範囲に触れた発言は全文をコピーし、親は変更しない |
-| 引用元に戻る／最初の子へ移る | `Shift+Tab` または `←`／`→` |
-| 編集中のコードや文章を引用する | 行を選んで `:'<,'>SpiderBranch`。引用付きの枝を作って質問欄を開く |
-| ツリーから分岐を開く | `Ctrl+w w` でツリーに移動し、対象行で `Enter` |
-| 会話グラフを拡大する | `g`。枝で `Enter` を押すと会話を開く。`g` / `Esc` で戻る |
-| 会話ペインの Markdown 装飾を切り替える | `r` |
-| AI の接続先を選ぶ／送信を中止する | `p`／`x` |
-| マップ一覧／新規作成／Markdown 書き出し | `m`／`n`／`e` |
-| 会話を新しいマップとして取り込む | `I` または `:SpiderImport path/to/chat.json` |
-| Spider を閉じる | `q` |
+| 操作一覧を開く／閉じる | `Space` → `?` |
+| 質問を書く | `i` |
+| 入力した質問を送信／下書きを残す | `Esc` → `Enter`／`Esc` → `q` |
+| 分岐して質問を書く（選択中は引用） | `Tab` |
+| 選択した発言を空の子分岐にコピー | `V` → `H` |
+| 引用元・親に戻る／最初の子へ | `Shift+Tab`・`←`／`→` |
+| 編集中のコードや文章を引用 | 行選択 → `:SpiderBranch` |
+| ペイン切替／ツリーで分岐を開く | `Ctrl+w w`／`Enter` |
+| 会話ツリーを拡大 | `g` |
+| 会話グラフを画像で見る | ツリーで `D` |
+| 本文の図・draw.io ファイルの画像 | 本文で `D` |
+| Markdown の装飾を切り替える | `r` |
+| AI の接続先を選ぶ／送信を中止 | `p`／`x` |
+| マップ一覧／新規／Markdown 書き出し | `m`／`n`／`e` |
+| 会話を取り込む | `I`・`:SpiderImport` |
+| プレビューを閉じる／Spider を終了 | `q` |
+<!-- spider-keys:end -->
 
 送信すると質問がすぐ表示され、会話ペインの上部に応答待ちのアニメーション、経過時間、`x` で中止できることが表示されます。中止またはエラーになった質問は会話履歴に保存されず、`i` で下書きに戻れます。
 
-会話ペインは [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) で見出し・表・コードブロックなどを整形します。Neovim 内では既存のプラグイン設定を使います。単体の `spider` は `stdpath("data")/lazy/render-markdown.nvim` のプラグインだけを読み込み、別の場所にある場合は `SPIDER_MARKDOWN_RUNTIME` で指定できます。プラグインがない場合は Markdown の構文強調だけになります。装飾を切り替えても本文や引用位置は変わりません。
+会話ペインは強調文・見出し・インラインコードを色分けします。[render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) があれば表やコードブロックも整形します。既存の Neovim ではプラグイン設定を変更しません。単体の `spider` は `stdpath("data")/lazy/render-markdown.nvim` を読み込み、別の場所にある場合は `SPIDER_MARKDOWN_RUNTIME` で指定できます。装飾を切り替えても本文や引用位置は変わりません。
+
+画像プレビューは、会話グラフには Graphviz (`dot`)、`mermaid` コードブロックには `@mermaid-js/mermaid-cli` (`mmdc` + Chromium)、`drawio` コードブロック（XML）と `.drawio` ファイルには draw.io Desktop (`drawio`) を使います。Mermaid と draw.io の描画は Linux の bubblewrap (`bwrap`) でネットワークから隔離します。通常のテキストだけで描いた図は自動変換しません。
+本文の図にカーソルを置いて `D` を押すと、その図を表示します。図の外なら選択メニューが開きます。draw.io は PNG 出力の既定に従って最初のページを表示します。
+
+Ghostty または Kitty 上の単体 `spider` では、Neovim のオプションパッケージ（例: `stdpath("data")/site/pack/spider/opt/image.nvim`）に [image.nvim](https://github.com/3rd/image.nvim) と、`PATH` 上に ImageMagick (`magick`) があれば、画像が TUI 内に開きます。既存の Neovim では設定済みの image.nvim を使います。プレビュー内の `o` で外部ビューアーを開けます。対応する端末・プラグインがない場合や tmux 内では、既定の画像ビューアーで開きます。
 
 マップは `~/Spider/maps/` に保存され、Markdown の既定の書き出し先は `~/Spider/` です。初回起動時に旧保存先（通常 `~/.local/share/spider-tui`）のマップをコピーします。元のデータは残ります。保存先を変更する場合は `SPIDER_DATA_DIR` を設定してください。
 

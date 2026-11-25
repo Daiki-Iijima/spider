@@ -1,14 +1,19 @@
 local M = {}
 local api = vim.api
 local fn = vim.fn
+local diagrams = require("spider.diagrams")
 local headings = api.nvim_create_namespace("spider.headings")
 local sources = api.nvim_create_namespace("spider.sources")
+local transcript_colors = api.nvim_create_namespace("spider.transcript.colors")
 local module_path = debug.getinfo(1, "S").source:sub(2)
-local backend = vim.fn.fnamemodify((vim.uv and vim.uv.fs_realpath(module_path)) or module_path, ":p:h:h:h")
-  .. "/dist/spider-tui.cjs"
+local root = fn.fnamemodify(vim.uv.fs_realpath(module_path) or module_path, ":p:h:h:h")
+local backend = root .. "/dist/spider-tui.cjs"
+local help_key = vim.env.SPIDER_STANDALONE == "1" and "<Space>?" or "<leader>?"
+local help_hint = (help_key == "<Space>?" or vim.g.mapleader == " ") and "Space ?" or "<Leader> ?"
 local providers = { "codex", "claude", "omp" }
 local provider_labels = { codex = "Codex", claude = "Claude", omp = "omp" }
 local role_labels = { system = "会話の指示", user = "質問", assistant = "AI の回答" }
+local role_colors = { system = "Comment", user = "SpiderQuestion", assistant = "SpiderAnswer" }
 local spinner = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 local frame_ms = 150
 local active
@@ -40,6 +45,55 @@ local function scratch(name, editable)
   return buf
 end
 
+local function define_colors()
+  local function foreground(name, fallback)
+    return api.nvim_get_hl(0, { name = name, link = false }).fg or fallback
+  end
+  local dark = vim.o.background == "dark"
+  local fg = foreground("Normal", dark and 0xe0e2ea or 0x20242c)
+  local bg = api.nvim_get_hl(0, { name = "Normal", link = false }).bg or (dark and 0x14161b or 0xf7f8fa)
+  local function tint(weight)
+    local color = 0
+    for _, shift in ipairs({ 16, 8, 0 }) do
+      local a, b = bit.band(bit.rshift(bg, shift), 255), bit.band(bit.rshift(fg, shift), 255)
+      color = color + bit.lshift(math.floor(a + (b - a) * weight), shift)
+    end
+    return color
+  end
+  local info = foreground("DiagnosticInfo", fg)
+  local accent = foreground("DiagnosticOk", fg)
+  local strong = foreground("DiagnosticWarn", fg)
+  api.nvim_set_hl(0, "SpiderAnswer", { fg = accent, bold = true })
+  api.nvim_set_hl(0, "SpiderQuestion", { fg = info, bold = true })
+  api.nvim_set_hl(0, "SpiderEmphasis", { fg = strong, bold = true })
+  api.nvim_set_hl(0, "SpiderSection", { fg = info, bold = true })
+  api.nvim_set_hl(0, "SpiderCode", { bg = tint(0.08) })
+  api.nvim_set_hl(0, "SpiderCodeInline", { fg = accent, bg = tint(0.09) })
+  api.nvim_set_hl(0, "SpiderMuted", { fg = tint(0.67) })
+  api.nvim_set_hl(transcript_colors, "@markup.strong.markdown_inline", { link = "SpiderEmphasis" })
+  api.nvim_set_hl(transcript_colors, "@markup.raw.markdown_inline", { link = "SpiderCodeInline" })
+  api.nvim_set_hl(transcript_colors, "@markup.quote.markdown", { link = "SpiderMuted" })
+  for level = 1, 6 do
+    api.nvim_set_hl(transcript_colors, "@markup.heading." .. level .. ".markdown", { link = "SpiderSection" })
+  end
+end
+
+local function setup_standalone_markdown()
+  require("render-markdown").setup({
+    heading = {
+      icons = { "◆ ", "◇ ", "▸ " },
+      backgrounds = { "" },
+      foregrounds = { "SpiderSection" },
+    },
+    code = {
+      width = "block", right_pad = 2, highlight = "SpiderCode", highlight_border = "SpiderCode",
+      highlight_language = "SpiderMuted", highlight_inline = "SpiderCodeInline",
+    },
+    quote = { highlight = "SpiderMuted" },
+    pipe_table = { head = "SpiderSection", row = "Normal" },
+  })
+end
+
 local function load_standalone_markdown()
   if vim.env.SPIDER_STANDALONE ~= "1" or vim.g.loaded_render_markdown then return end
   if #api.nvim_get_runtime_file("plugin/render-markdown.lua", false) == 0 then
@@ -49,6 +103,7 @@ local function load_standalone_markdown()
     end
   end
   vim.cmd.runtime("plugin/render-markdown.lua")
+  if vim.g.loaded_render_markdown then setup_standalone_markdown() end
 end
 
 local function configure(win, tree)
@@ -66,6 +121,14 @@ local function configure(win, tree)
   wo.cursorline = tree
 end
 
+local function configure_transcript(win)
+  configure(win, false)
+  vim.wo[win].breakindent = true
+  vim.wo[win].colorcolumn = ""
+  vim.wo[win].sidescrolloff = 0
+  api.nvim_win_set_hl_ns(win, transcript_colors)
+end
+
 local function replace_lines(buf, lines)
   vim.bo[buf].modifiable = true
   api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -76,6 +139,59 @@ end
 
 local function heading(buf, row)
   api.nvim_buf_set_extmark(buf, headings, row - 1, 0, { line_hl_group = "Title" })
+end
+
+local function toggle_help(session)
+  if session.help_win and api.nvim_win_is_valid(session.help_win) then
+    api.nvim_win_close(session.help_win, true)
+    return
+  end
+  local ok, doc = pcall(fn.readfile, root .. "/README.md")
+  local start = ok and fn.index(doc, "<!-- spider-keys:start -->") or -1
+  local finish = ok and fn.index(doc, "<!-- spider-keys:end -->") or -1
+  if start == -1 or finish <= start + 1 then
+    notify("操作表を読み込めませんでした。", vim.log.levels.ERROR)
+    return
+  end
+  local width = math.min(80, vim.o.columns - 6)
+  local lines, spans, key_width = {}, {}, 0
+  for index = start + 4, finish do
+    local action, keys = doc[index]:match("^|%s*(.-)%s*|%s*(.-)%s*|$")
+    if action and keys then
+      keys = keys:gsub("`", "")
+      key_width = math.max(key_width, fn.strdisplaywidth(keys))
+      spans[#spans + 1] = #keys
+      lines[#lines + 1] = { keys, action }
+    end
+  end
+  local height = math.min(#lines, vim.o.lines - vim.o.cmdheight - 6)
+  if width < 26 or height < 3 then return notify("操作表を表示するには端末を広げてください。") end
+  for index, item in ipairs(lines) do
+    local padding = math.max(2, math.min(key_width, math.floor(width / 2)) - fn.strdisplaywidth(item[1]) + 2)
+    lines[index] = item[1] .. string.rep(" ", padding) .. item[2]
+  end
+  local buf = scratch("help", false)
+  vim.bo[buf].bufhidden = "wipe"
+  replace_lines(buf, lines)
+  for index, bytes in ipairs(spans) do
+    api.nvim_buf_set_extmark(buf, headings, index - 1, 0, { end_col = bytes, hl_group = "SpiderSection" })
+  end
+  local win = api.nvim_open_win(buf, true, {
+    relative = "editor", row = math.floor((vim.o.lines - height) / 2) - 1,
+    col = math.floor((vim.o.columns - width) / 2) - 1, width = width, height = height,
+    style = "minimal", border = "rounded", title = " Spider の操作 ",
+    footer = " q / Esc 閉じる ", footer_pos = "center",
+  })
+  session.help_win = win
+  configure(win, false)
+  vim.wo[win].scrolloff = 0
+  for _, key in ipairs({ "q", "<Esc>", help_key }) do
+    vim.keymap.set("n", key, function() api.nvim_win_close(win, true) end, { buffer = buf })
+  end
+end
+
+local function bind_help(session, buf)
+  vim.keymap.set("n", help_key, function() toggle_help(session) end, { buffer = buf, desc = "Spider の操作一覧" })
 end
 
 local function draw_status(session)
@@ -91,7 +207,7 @@ local function draw_status(session)
     hint = session.cancelling and "" or " %=%<x で中止 "
   else
     activity = not session.job and "停止中" or not state and "起動中" or session.waiting and "処理中" or "待機中"
-    hint = " %=%<i 質問を書く  Tab 分岐  → 子へ "
+    hint = " %=%<i 質問を書く  Tab 分岐  " .. help_hint .. " 操作 "
   end
   vim.wo[session.transcript_win].winbar = " Spider · " .. (provider and provider .. " · " or "") .. activity .. hint
 end
@@ -113,21 +229,7 @@ local function status(session)
 end
 
 local function render_tree(session)
-  local state = session.state
-  local lines = {
-    state and label(state.map.title) or "Spider",
-    "Enter 分岐を開く",
-    "C-w w 画面を切替",
-    "m 一覧 / n 新規",
-    "I 取り込み",
-    "g グラフを拡大",
-    "選択中 H 履歴コピー",
-    "r Markdown 切替",
-    "e 書き出し",
-    "p 接続先",
-    "x 中止 / q 終了",
-    "",
-  }
+  local state, lines = session.state, {}
   local ids, selected, continuation = {}, nil, {}
   if state then
     for _, entry in ipairs(state.tree) do
@@ -144,7 +246,6 @@ local function render_tree(session)
     end
   end
   replace_lines(session.tree, lines)
-  heading(session.tree, 1)
   session.tree_ids = ids
   session.tree_selected = selected
   if selected then
@@ -167,7 +268,7 @@ local function render_transcript(session, scroll_end)
     lines[2] = node.sourceMessageId and "↳ 元の回答へ  Shift+Tab" or "↳ 親の会話へ  Shift+Tab"
   end
   lines[#lines + 1] = ""
-  local blocks, captions = {}, {}
+  local blocks, captions, figures = {}, {}, {}
   local last_message_line = 1
   if node then
     if node.anchorText and vim.trim((node.anchorText:gsub("%s+", " "))) ~= node.title then
@@ -182,6 +283,7 @@ local function render_transcript(session, scroll_end)
       blocks[message.id] = { first = first, lines = body, message = message }
       captions[first] = message.role
       vim.list_extend(lines, body)
+      diagrams.scan(body, first, figures)
       last_message_line = #lines
       lines[#lines + 1] = ""
     end
@@ -199,15 +301,22 @@ local function render_transcript(session, scroll_end)
   api.nvim_buf_clear_namespace(buf, sources, 0, -1)
   heading(buf, 1)
   if node and node.parentId then
-    api.nvim_buf_set_extmark(buf, headings, 1, 0, { line_hl_group = "Comment" })
+    api.nvim_buf_set_extmark(buf, headings, 1, 0, { line_hl_group = "SpiderMuted" })
   end
   -- Virtual captions keep headings out of the Markdown and source ranges.
   for row, role in pairs(captions) do
     api.nvim_buf_set_extmark(buf, headings, row - 1, 0, {
-      virt_lines = { { { role_labels[role] or label(role), role == "assistant" and "Title" or "DiagnosticInfo" } } },
+      virt_lines = { { { "▎ " .. (role_labels[role] or label(role)), role_colors[role] or "SpiderMuted" } } },
       virt_lines_above = true,
     })
   end
+  for _, figure in ipairs(figures) do
+    api.nvim_buf_set_extmark(buf, headings, figure.first - 1, 0, {
+      virt_lines = { { { "◇ " .. figure.label .. "  ·  D で画像を表示", "SpiderSection" } } },
+      virt_lines_above = true,
+    })
+  end
+  session.figures = figures
   session.blocks = blocks
   session.shown_prompt = prompt
   if owns_window(session.transcript_win, buf) then
@@ -308,6 +417,7 @@ local function compose(session)
   session.composer = composer
   configure(win, false)
   vim.wo[win].winbar = " 質問を入力 · Esc → Enter で送信 · q で下書きを残して閉じる "
+  bind_help(session, buf)
   api.nvim_create_autocmd("BufWinLeave", {
     buffer = buf,
     callback = function()
@@ -513,7 +623,7 @@ local function toggle_graph(session)
     return
   end
   local width = math.min(104, vim.o.columns - 4)
-  local height = math.min(api.nvim_buf_line_count(session.tree), vim.o.lines - vim.o.cmdheight - 5)
+  local height = math.min(math.max(3, api.nvim_buf_line_count(session.tree)), vim.o.lines - vim.o.cmdheight - 5)
   if width < 16 or height < 3 then
     notify("グラフを表示するには端末を広げてください。")
     return
@@ -534,6 +644,7 @@ local function toggle_graph(session)
 end
 
 local function bind(session, buf)
+  bind_help(session, buf)
   local function key(lhs, action, desc)
     vim.keymap.set("n", lhs, action, { buffer = buf, desc = desc })
   end
@@ -579,6 +690,18 @@ local function bind(session, buf)
     end, workspace and workspace .. "/")
   end, "Spider マップを書き出し")
   key("g", function() toggle_graph(session) end, "Spider の会話グラフを拡大")
+  key("D", function()
+    local state = session.state
+    if not state then return end
+    local function still_here()
+      return visible(session) and session.state.map.id == state.map.id and session.state.node.id == state.node.id
+    end
+    if buf == session.tree then
+      diagrams.graph(state, notify, still_here)
+    else
+      diagrams.choose(session.figures, api.nvim_win_get_cursor(0)[1], notify, still_here)
+    end
+  end, "Spider の図を画像で表示")
   key("r", function()
     if not vim.g.loaded_render_markdown then
       notify("Markdown の装飾には render-markdown.nvim が必要です。")
@@ -623,13 +746,14 @@ local function ensure_panes(session)
   if not owns_window(session.transcript_win, session.transcript) then
     local win = api.nvim_open_win(session.transcript, true, { split = "right" })
     session.transcript_win = win
-    configure(win, false)
+    configure_transcript(win)
   end
   if not owns_window(session.tree_win, session.tree) then
     local width = math.min(34, math.max(14, math.floor(vim.o.columns / 3)))
     local win = api.nvim_open_win(session.tree, false, { split = "left", win = session.transcript_win, width = width })
     session.tree_win = win
     configure(win, true)
+    vim.wo[win].winbar = " 分岐 %=%<" .. help_hint .. " 操作 "
     vim.wo[win].winfixwidth = true
     if session.tree_selected then api.nvim_win_set_cursor(win, { session.tree_selected, 0 }) end
   end
@@ -670,7 +794,8 @@ function M.open()
   session.tab = api.nvim_get_current_tabpage()
   session.transcript_win = api.nvim_get_current_win()
   active = session
-  configure(session.transcript_win, false)
+  define_colors()
+  configure_transcript(session.transcript_win)
   load_standalone_markdown()
   vim.bo[session.transcript].filetype = "markdown"
   pcall(vim.treesitter.start, session.transcript, "markdown")
@@ -679,6 +804,7 @@ function M.open()
   bind(session, session.tree)
   bind(session, session.transcript)
   local group = api.nvim_create_augroup("SpiderTab" .. session.tab, { clear = true })
+  api.nvim_create_autocmd("ColorScheme", { group = group, callback = define_colors })
   api.nvim_create_autocmd("TabClosed", { group = group, callback = function()
     if api.nvim_tabpage_is_valid(session.tab) then return end
     if active == session then active = nil end
