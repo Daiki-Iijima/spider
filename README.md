@@ -61,10 +61,14 @@ return {
 | 引用元に戻る／最初の子へ移る | `Shift+Tab` または `←`／`→` |
 | 編集中のコードや文章を引用する | 行を選んで `:'<,'>SpiderBranch` |
 | ツリーから分岐を開く | `Ctrl+w w` でツリーに移動し、対象行で `Enter` |
+| 会話グラフを拡大する | `g`。枝で `Enter` を押すと会話を開く。`g` / `Esc` で戻る |
+| 会話ペインの Markdown 装飾を切り替える | `r` |
 | AI の接続先を選ぶ／送信を中止する | `p`／`x` |
 | マップ一覧／新規作成／Markdown 書き出し | `m`／`n`／`e` |
 | 会話を新しいマップとして取り込む | `I` または `:SpiderImport path/to/chat.json` |
 | Spider を閉じる | `q` |
+
+会話ペインは [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) で見出し・表・コードブロックなどを整形します。Neovim 内では既存のプラグイン設定を使います。単体の `spider` は `stdpath("data")/lazy/render-markdown.nvim` のプラグインだけを読み込み、別の場所にある場合は `SPIDER_MARKDOWN_RUNTIME` で指定できます。プラグインがない場合は Markdown の構文強調だけになります。装飾を切り替えても本文や引用位置は変わりません。
 
 マップは `~/Spider/maps/` に保存され、Markdown の既定の書き出し先は `~/Spider/` です。初回起動時に旧保存先（通常 `~/.local/share/spider-tui`）のマップをコピーします。元のデータは残ります。保存先を変更する場合は `SPIDER_DATA_DIR` を設定してください。
 

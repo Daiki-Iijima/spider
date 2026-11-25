@@ -38,6 +38,17 @@ local function scratch(name, editable)
   return buf
 end
 
+local function load_standalone_markdown()
+  if vim.env.SPIDER_STANDALONE ~= "1" or vim.g.loaded_render_markdown then return end
+  if #api.nvim_get_runtime_file("plugin/render-markdown.lua", false) == 0 then
+    local dir = vim.env.SPIDER_MARKDOWN_RUNTIME or (fn.stdpath("data") .. "/lazy/render-markdown.nvim")
+    if vim.uv.fs_stat(dir .. "/plugin/render-markdown.lua") then
+      vim.opt.runtimepath:append(dir)
+    end
+  end
+  vim.cmd.runtime("plugin/render-markdown.lua")
+end
+
 local function configure(win, tree)
   local wo = vim.wo[win]
   wo.number = false
@@ -86,17 +97,24 @@ local function render_tree(session)
     "C-w w 画面を切替",
     "m 一覧 / n 新規",
     "I 取り込み",
+    "g グラフを拡大",
+    "r Markdown 切替",
     "e 書き出し",
     "p 接続先",
     "x 中止 / q 終了",
     "",
   }
-  local ids, selected = {}, nil
+  local ids, selected, continuation = {}, nil, {}
   if state then
     for _, entry in ipairs(state.tree) do
       local current = entry.id == state.node.id
-      lines[#lines + 1] = string.rep("  ", math.min(entry.depth, 12))
-        .. (current and "› " or "  ") .. label(entry.title)
+      local prefix = {}
+      if entry.depth > 0 then
+        for depth = 1, entry.depth - 1 do prefix[depth] = continuation[depth] end
+        prefix[entry.depth] = entry.last and "└─ " or "├─ "
+        continuation[entry.depth] = entry.last and "   " or "│  "
+      end
+      lines[#lines + 1] = table.concat(prefix) .. (current and "› " or "  ") .. label(entry.title)
       ids[#lines] = entry.id
       if current then selected = #lines end
     end
@@ -111,6 +129,9 @@ local function render_tree(session)
       api.nvim_win_set_cursor(session.tree_win, { selected, 0 })
     end
   end
+  if selected and owns_window(session.graph_win, session.tree) then
+    api.nvim_win_set_cursor(session.graph_win, { selected, 0 })
+  end
 end
 
 local function render_transcript(session, scroll_end)
@@ -123,12 +144,14 @@ local function render_transcript(session, scroll_end)
     if node.anchorText then
       titles[#titles + 1] = #lines + 1
       lines[#lines + 1] = "引用"
+      lines[#lines + 1] = ""
       vim.list_extend(lines, vim.split(node.anchorText, "\n", { plain = true }))
       lines[#lines + 1] = ""
     end
     for _, message in ipairs(node.messages) do
       titles[#titles + 1] = #lines + 1
       lines[#lines + 1] = role_labels[message.role] or label(message.role)
+      lines[#lines + 1] = ""
       local body = vim.split(message.content, "\n", { plain = true })
       blocks[message.id] = { first = #lines + 1, lines = body, message = message }
       vim.list_extend(lines, body)
@@ -387,6 +410,32 @@ local function start(session, cwd)
   status(session)
 end
 
+local function toggle_graph(session)
+  if owns_window(session.graph_win, session.tree) then
+    api.nvim_win_close(session.graph_win, true)
+    return
+  end
+  local width = math.min(104, vim.o.columns - 4)
+  local height = math.min(api.nvim_buf_line_count(session.tree), vim.o.lines - vim.o.cmdheight - 5)
+  if width < 16 or height < 3 then
+    notify("グラフを表示するには端末を広げてください。")
+    return
+  end
+  local win = api.nvim_open_win(session.tree, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.floor((vim.o.lines - height - 2) / 2),
+    col = math.floor((vim.o.columns - width - 2) / 2),
+    border = "rounded",
+    title = " 会話グラフ · Enter で開く / g で戻る ",
+    title_pos = "center",
+  })
+  session.graph_win = win
+  configure(win, true)
+  if session.tree_selected then api.nvim_win_set_cursor(win, { session.tree_selected, 0 }) end
+end
+
 local function bind(session, buf)
   local function key(lhs, action, desc)
     vim.keymap.set("n", lhs, action, { buffer = buf, desc = desc })
@@ -433,9 +482,21 @@ local function bind(session, buf)
       return { op = "export", path = path }
     end, workspace and workspace .. "/")
   end, "Spider マップを書き出し")
+  key("g", function() toggle_graph(session) end, "Spider の会話グラフを拡大")
+  key("r", function()
+    if not vim.g.loaded_render_markdown then
+      notify("Markdown の装飾には render-markdown.nvim が必要です。")
+      return
+    end
+    api.nvim_buf_call(session.transcript, require("render-markdown").buf_toggle)
+  end, "Spider の Markdown 表示を切替")
   key("x", function() send(session, { op = "cancel" }) end, "Spider へのリクエストを中止")
   key("q", function()
     if not live(session) then return end
+    if api.nvim_get_current_win() == session.graph_win then
+      api.nvim_win_close(session.graph_win, true)
+      return
+    end
     local ok, err
     if vim.env.SPIDER_STANDALONE == "1" then
       ok, err = pcall(vim.cmd.qall)
@@ -448,8 +509,14 @@ local function bind(session, buf)
   if buf == session.tree then
     key("<CR>", function()
       local id = session.tree_ids[api.nvim_win_get_cursor(0)[1]]
-      if id then send(session, { op = "goto", id = id }) end
+      if id and send(session, { op = "goto", id = id }) and api.nvim_get_current_win() == session.graph_win then
+        api.nvim_win_close(session.graph_win, true)
+        if owns_window(session.transcript_win, session.transcript) then api.nvim_set_current_win(session.transcript_win) end
+      end
     end, "Spider の分岐に移動")
+    key("<Esc>", function()
+      if api.nvim_get_current_win() == session.graph_win then api.nvim_win_close(session.graph_win, true) end
+    end, "Spider の会話グラフを閉じる")
   else
     vim.keymap.set("x", "<Tab>", function() visual_branch(session) end, { buffer = buf, desc = "Spider の応答を引用して分岐" })
   end
@@ -507,6 +574,9 @@ function M.open()
   session.transcript_win = api.nvim_get_current_win()
   active = session
   configure(session.transcript_win, false)
+  load_standalone_markdown()
+  vim.bo[session.transcript].filetype = "markdown"
+  pcall(vim.treesitter.start, session.transcript, "markdown")
   render_tree(session)
   render_transcript(session)
   bind(session, session.tree)

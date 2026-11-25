@@ -134,17 +134,17 @@ function run(): void {
   }
 
   function state(jump?: BranchSource): void {
-    const tree: { id: string; title: string; depth: number }[] = [];
-    const stack = [{ id: map.rootNodeId, depth: 0 }];
+    const tree: { id: string; title: string; depth: number; last: boolean }[] = [];
+    const stack = [{ id: map.rootNodeId, depth: 0, last: true }];
     const seen = new Set<string>();
     while (stack.length) {
-      const { id, depth } = stack.pop()!;
+      const { id, depth, last } = stack.pop()!;
       const node = map.nodes[id];
       if (!node || seen.has(id)) continue;
       seen.add(id);
-      tree.push({ id, title: node.title, depth });
+      tree.push({ id, title: node.title, depth, last });
       for (let i = node.children.length - 1; i >= 0; i--) {
-        stack.push({ id: node.children[i]!, depth: depth + 1 });
+        stack.push({ id: node.children[i]!, depth: depth + 1, last: i === node.children.length - 1 });
       }
     }
     emit({ type: "state", map: { id: map.id, title: map.title }, workspace: dataDir, tree, node: current(), provider, busy: Boolean(pending), jump });
