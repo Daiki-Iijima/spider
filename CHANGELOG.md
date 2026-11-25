@@ -10,6 +10,7 @@
 - Fork: focus the question composer as soon as a new branch is created.
 - Fork: color headings, emphasis, and inline code for easier transcript reading; preview conversation graphs, Mermaid, and draw.io as local PNGs.
 - Fork: keep the sidebar for branches and move the Japanese shortcut guide to `Space` → `?`.
+- Fork: toggle the branch sidebar with `Space` → `n`, move between panes with `Space` → `h/j/k/l`, and open the expanded tree with `Space` → `g` without overriding `gg`.
 - [0.1.14：设置页标题文案审核修正及本轮完整更新](.github/release-notes/0.1.14.md)
 - [0.1.13：教学风格、节点随记与社区审核兼容修正](.github/release-notes/0.1.13.md)
 - [0.1.12：教学风格、Enter 摘录、节点随记导出和设置页改进](.github/release-notes/0.1.12.md)

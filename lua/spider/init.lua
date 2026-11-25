@@ -8,8 +8,9 @@ local transcript_colors = api.nvim_create_namespace("spider.transcript.colors")
 local module_path = debug.getinfo(1, "S").source:sub(2)
 local root = fn.fnamemodify(vim.uv.fs_realpath(module_path) or module_path, ":p:h:h:h")
 local backend = root .. "/dist/spider-tui.cjs"
-local help_key = vim.env.SPIDER_STANDALONE == "1" and "<Space>?" or "<leader>?"
-local help_hint = (help_key == "<Space>?" or vim.g.mapleader == " ") and "Space ?" or "<Leader> ?"
+local leader = vim.env.SPIDER_STANDALONE == "1" and "<Space>" or "<leader>"
+local leader_hint = (leader == "<Space>" or vim.g.mapleader == " ") and "Space" or "<Leader>"
+local help_key, help_hint = leader .. "?", leader_hint .. " ?"
 local providers = { "codex", "claude", "omp" }
 local provider_labels = { codex = "Codex", claude = "Claude", omp = "omp" }
 local role_labels = { system = "会話の指示", user = "質問", assistant = "AI の回答" }
@@ -385,6 +386,68 @@ local function send(session, request)
   return true
 end
 
+local function show_tree(session)
+  if owns_window(session.tree_win, session.tree) then return end
+  local width = math.min(34, math.max(14, math.floor(vim.o.columns / 3)))
+  local win = api.nvim_open_win(session.tree, false, { split = "left", win = -1, width = width })
+  session.tree_win = win
+  configure(win, true)
+  vim.wo[win].winbar = " 分岐 %=%<" .. help_hint .. " 操作 "
+  vim.wo[win].winfixwidth = true
+  if session.tree_selected then api.nvim_win_set_cursor(win, { session.tree_selected, 0 }) end
+end
+
+local function toggle_graph(session)
+  if owns_window(session.graph_win, session.tree) then
+    api.nvim_win_close(session.graph_win, true)
+    return
+  end
+  local width = math.min(104, vim.o.columns - 4)
+  local height = math.min(math.max(3, api.nvim_buf_line_count(session.tree)), vim.o.lines - vim.o.cmdheight - 5)
+  if width < 16 or height < 3 then
+    notify("グラフを表示するには端末を広げてください。")
+    return
+  end
+  local win = api.nvim_open_win(session.tree, true, {
+    relative = "editor",
+    width = width,
+    height = height,
+    row = math.floor((vim.o.lines - height - 2) / 2),
+    col = math.floor((vim.o.columns - width - 2) / 2),
+    border = "rounded",
+    title = " 会話グラフ · Enter で開く / " .. leader_hint .. " g で戻る ",
+    title_pos = "center",
+  })
+  session.graph_win = win
+  configure(win, true)
+  if session.tree_selected then api.nvim_win_set_cursor(win, { session.tree_selected, 0 }) end
+end
+
+local function bind_panes(session, buf)
+  vim.keymap.set("n", leader .. "g", function() toggle_graph(session) end, {
+    buffer = buf, nowait = true, desc = "Spider の会話グラフを拡大",
+  })
+  vim.keymap.set("n", leader .. "n", function()
+    if owns_window(session.tree_win, session.tree) then
+      local focused = api.nvim_get_current_win() == session.tree_win
+      api.nvim_win_close(session.tree_win, true)
+      session.tree_hidden = true
+      if focused and owns_window(session.transcript_win, session.transcript) then
+        api.nvim_set_current_win(session.transcript_win)
+      end
+    else
+      local ok, err = pcall(show_tree, session)
+      if ok then session.tree_hidden = false
+      else notify("分岐ツリーを開けませんでした。", vim.log.levels.ERROR, err) end
+    end
+  end, { buffer = buf, desc = "Spider の分岐ツリーを表示／非表示" })
+  for dir, name in pairs({ h = "左", j = "下", k = "上", l = "右" }) do
+    vim.keymap.set("n", leader .. dir, "<Cmd>wincmd " .. dir .. "<CR>", {
+      buffer = buf, desc = "Spider の" .. name .. "のペインへ",
+    })
+  end
+end
+
 local function close_composer(session)
   local composer = session.composer
   if composer and owns_window(composer.win, composer.buf) then
@@ -418,6 +481,7 @@ local function compose(session)
   configure(win, false)
   vim.wo[win].winbar = " 質問を入力 · Esc → Enter で送信 · q で下書きを残して閉じる "
   bind_help(session, buf)
+  bind_panes(session, buf)
   api.nvim_create_autocmd("BufWinLeave", {
     buffer = buf,
     callback = function()
@@ -617,34 +681,9 @@ local function start(session, cwd)
   status(session)
 end
 
-local function toggle_graph(session)
-  if owns_window(session.graph_win, session.tree) then
-    api.nvim_win_close(session.graph_win, true)
-    return
-  end
-  local width = math.min(104, vim.o.columns - 4)
-  local height = math.min(math.max(3, api.nvim_buf_line_count(session.tree)), vim.o.lines - vim.o.cmdheight - 5)
-  if width < 16 or height < 3 then
-    notify("グラフを表示するには端末を広げてください。")
-    return
-  end
-  local win = api.nvim_open_win(session.tree, true, {
-    relative = "editor",
-    width = width,
-    height = height,
-    row = math.floor((vim.o.lines - height - 2) / 2),
-    col = math.floor((vim.o.columns - width - 2) / 2),
-    border = "rounded",
-    title = " 会話グラフ · Enter で開く / g で戻る ",
-    title_pos = "center",
-  })
-  session.graph_win = win
-  configure(win, true)
-  if session.tree_selected then api.nvim_win_set_cursor(win, { session.tree_selected, 0 }) end
-end
-
 local function bind(session, buf)
   bind_help(session, buf)
+  bind_panes(session, buf)
   local function key(lhs, action, desc)
     vim.keymap.set("n", lhs, action, { buffer = buf, desc = desc })
   end
@@ -689,7 +728,6 @@ local function bind(session, buf)
       return { op = "export", path = path }
     end, workspace and workspace .. "/")
   end, "Spider マップを書き出し")
-  key("g", function() toggle_graph(session) end, "Spider の会話グラフを拡大")
   key("D", function()
     local state = session.state
     if not state then return end
@@ -748,15 +786,7 @@ local function ensure_panes(session)
     session.transcript_win = win
     configure_transcript(win)
   end
-  if not owns_window(session.tree_win, session.tree) then
-    local width = math.min(34, math.max(14, math.floor(vim.o.columns / 3)))
-    local win = api.nvim_open_win(session.tree, false, { split = "left", win = session.transcript_win, width = width })
-    session.tree_win = win
-    configure(win, true)
-    vim.wo[win].winbar = " 分岐 %=%<" .. help_hint .. " 操作 "
-    vim.wo[win].winfixwidth = true
-    if session.tree_selected then api.nvim_win_set_cursor(win, { session.tree_selected, 0 }) end
-  end
+  if not session.tree_hidden then show_tree(session) end
   status(session)
 end
 
