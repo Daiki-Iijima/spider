@@ -74,6 +74,7 @@ local function define_colors()
   api.nvim_set_hl(0, "SpiderCode", { bg = tint(0.08) })
   api.nvim_set_hl(0, "SpiderCodeInline", { fg = accent, bg = tint(0.09) })
   api.nvim_set_hl(0, "SpiderMuted", { fg = tint(0.67) })
+  api.nvim_set_hl(0, "SpiderTurnDivider", { fg = tint(0.32) })
   api.nvim_set_hl(transcript_colors, "@markup.strong.markdown_inline", { link = "SpiderEmphasis" })
   api.nvim_set_hl(transcript_colors, "@markup.raw.markdown_inline", { link = "SpiderCodeInline" })
   api.nvim_set_hl(transcript_colors, "@markup.quote.markdown", { link = "SpiderMuted" })
@@ -313,7 +314,17 @@ local function render_transcript(session, scroll_end)
     end
   end
   lines[#lines + 1] = ""
-  local blocks, captions, figures = {}, {}, {}
+  local blocks, captions, figures, turn_starts = {}, {}, {}, {}
+  local answered = false
+  local function caption(row, role)
+    captions[row] = role
+    if role == "assistant" then
+      answered = true
+    elseif role == "user" and answered then
+      turn_starts[#turn_starts + 1] = row
+      answered = false
+    end
+  end
   local last_message_line = 1
   if node then
     if node.anchorText and vim.trim((node.anchorText:gsub("%s+", " "))) ~= node.title then
@@ -326,14 +337,14 @@ local function render_transcript(session, scroll_end)
       local first = #lines + 1
       local body = vim.split(message.content, "\n", { plain = true })
       blocks[message.id] = { first = first, lines = body, message = message }
-      captions[first] = message.role
+      caption(first, message.role)
       vim.list_extend(lines, body)
       diagrams.scan(body, first, figures)
       last_message_line = #lines
       lines[#lines + 1] = ""
     end
     if prompt then
-      captions[#lines + 1] = "user"
+      caption(#lines + 1, "user")
       vim.list_extend(lines, vim.split(prompt, "\n", { plain = true }))
       last_message_line = #lines
     elseif #node.messages == 0 then
@@ -348,6 +359,13 @@ local function render_transcript(session, scroll_end)
   heading(buf, 1)
   if node and node.parentId then
     api.nvim_buf_set_extmark(buf, headings, 1, 0, { line_hl_group = "SpiderMuted" })
+  end
+  for _, row in ipairs(turn_starts) do
+    -- Reuse the empty line between messages without changing buffer text or source offsets.
+    api.nvim_buf_set_extmark(buf, headings, row - 2, 0, {
+      virt_text = { { string.rep("─", 28), "SpiderTurnDivider" } },
+      virt_text_pos = "overlay",
+    })
   end
   -- Virtual captions keep headings out of the Markdown and source ranges.
   for row, role in pairs(captions) do

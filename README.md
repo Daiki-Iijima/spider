@@ -86,6 +86,8 @@ Spider の `Space` → `?` で操作一覧を開きます。`Space` は設定済
 
 送信すると質問がすぐ表示され、会話ペインの上部に応答待ちのアニメーションと経過時間が表示されます。中止またはエラーになった質問は会話履歴に保存されず、`Space s i` で下書きに戻れます。
 
+質問と回答はひとまとまりにし、回答の後で次の質問が始まる箇所にだけ区切り線を表示します。
+
 会話ペインは強調文・見出し・インラインコードを色分けします。[render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) を設定している場合は、ユーザー設定に従って表やコードブロックも整形します。ユーザー設定のない単体起動では `stdpath("data")/lazy/render-markdown.nvim` を探します。別の場所は `SPIDER_MARKDOWN_RUNTIME` で指定できます。装飾を切り替えても本文や引用位置は変わりません。
 
 画像プレビューは、会話グラフには Graphviz (`dot`)、`mermaid` コードブロックには `@mermaid-js/mermaid-cli` (`mmdc` + Chromium)、`drawio` コードブロック（XML）と `.drawio` ファイルには draw.io Desktop (`drawio`) を使います。Mermaid と draw.io の描画は Linux の bubblewrap (`bwrap`) でネットワークから隔離します。通常のテキストだけで描いた図は自動変換しません。
