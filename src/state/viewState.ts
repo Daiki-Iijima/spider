@@ -1,7 +1,7 @@
 import { Notice } from "obsidian";
 import type BranchChatMapPlugin from "../main";
 import { OpenAICompatibleProvider } from "../ai/openAICompatibleProvider";
-import { createRootMap, addChildNode, appendMessage, createMessage, getAncestorPath, updateMapTitle, updateNode } from "../domain/chatMap";
+import { createRootMap, addChildNode, appendMessage, createMessage, getAncestorPath, removeBranch, updateMapTitle, updateNode } from "../domain/chatMap";
 import { applyDagreLayout } from "../domain/layout";
 import { isSourceTextRange } from "../domain/guards";
 import { buildExportFiles } from "../export/exporters";
@@ -163,52 +163,12 @@ export class ViewState {
 
   deleteNode(nodeId: NodeId): void {
     const { map, activeNodeId } = this.state;
-    if (!map || !activeNodeId || nodeId === map.rootNodeId) {
-      return;
-    }
+    if (!map || !activeNodeId) return;
+    const branch = removeBranch(map, nodeId);
+    if (!branch) return;
 
-    const node = map.nodes[nodeId];
-    if (!node) {
-      return;
-    }
-
-    let nextMap = {
-      ...map,
-      nodes: { ...map.nodes },
-      edges: [...map.edges],
-    };
-
-    if (node.parentId) {
-      const parent = nextMap.nodes[node.parentId];
-      if (parent) {
-        nextMap.nodes[node.parentId] = {
-          ...parent,
-          children: parent.children.filter((id) => id !== nodeId),
-        };
-      }
-    }
-
-    nextMap.edges = nextMap.edges.filter((e) => e.from !== nodeId && e.to !== nodeId);
-
-    const toDelete = new Set<NodeId>();
-    const collect = (id: NodeId): void => {
-      toDelete.add(id);
-      const n = nextMap.nodes[id];
-      if (n) {
-        for (const cid of n.children) {
-          collect(cid);
-        }
-      }
-    };
-    collect(nodeId);
-
-    for (const id of toDelete) {
-      delete nextMap.nodes[id];
-    }
-
-    const nextActiveId = activeNodeId === nodeId ? (node.parentId ?? map.rootNodeId) : activeNodeId;
-    this.commitMap(nextMap as ChatMap);
-    this.setState({ activeNodeId: nextActiveId });
+    this.commitMap(branch.map);
+    if (branch.removed.has(activeNodeId)) this.setState({ activeNodeId: branch.parentId });
   }
 
   async summarizeCurrentNode(): Promise<void> {

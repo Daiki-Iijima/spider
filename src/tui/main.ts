@@ -3,7 +3,7 @@ import { constants, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, r
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { addChildNode, appendMessage, createMessage, createRootMap, updateMapTitle, updateNode } from "../domain/chatMap";
+import { addChildNode, appendMessage, createMessage, createRootMap, removeBranch, updateMapTitle, updateNode } from "../domain/chatMap";
 import { isChatMap, isSourceTextRange } from "../domain/guards";
 import { exportMarkdown } from "../export/exporters";
 import type { BranchSource, ChatMap } from "../types";
@@ -16,6 +16,7 @@ type Request =
   | { op: "parent" | "cancel" | "maps" | "words" }
   | { op: "branch"; source?: BranchSource; anchor?: string }
   | { op: "fork"; messageId: string; line: number }
+  | { op: "delete-branch"; id: string }
   | { op: "copy-history"; childId: string; first: string; last: string }
   | { op: "word-add"; text: string }
   | { op: "word-note"; word: string; note: string }
@@ -146,7 +147,7 @@ function run(): void {
     map = next;
   }
 
-  function state(jump?: BranchSource): void {
+  function state(jump?: BranchSource, deleted?: string[]): void {
     const tree: { id: string; title: string; depth: number; last: boolean; empty: boolean }[] = [];
     const stack = [{ id: map.rootNodeId, depth: 0, last: true }];
     const seen = new Set<string>();
@@ -168,7 +169,7 @@ function run(): void {
         branchSources.push({ messageId: child.sourceMessageId, ...child.sourceTextRange });
       }
     }
-    emit({ type: "state", map: { id: map.id, title: map.title }, workspace: dataDir, tree, node, branchSources, provider, busy: Boolean(pending), jump });
+    emit({ type: "state", map: { id: map.id, title: map.title }, workspace: dataDir, tree, node, branchSources, provider, busy: Boolean(pending), jump, deleted });
   }
 
   function select(id: string, jump?: BranchSource): void {
@@ -227,6 +228,18 @@ function run(): void {
       case "goto":
         select(request.id);
         return;
+      case "delete-branch": {
+        if (request.id === map.rootNodeId) throw new Error("最初の会話は削除できません。");
+        const branch = removeBranch(map, request.id);
+        if (!branch) throw new Error("削除する分岐が見つかりません。");
+        save(branch.map);
+        if (branch.removed.has(nodeId)) {
+          nodeId = branch.parentId;
+          saveSession();
+        }
+        state(undefined, [...branch.removed]);
+        return;
+      }
       case "parent": {
         const { parentId, sourceMessageId, sourceTextRange } = current();
         if (parentId) {

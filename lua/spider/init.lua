@@ -407,6 +407,7 @@ end
 local replies = {
   ["goto"] = "state", parent = "state", branch = "state", provider = "state",
   fork = "state", ["copy-history"] = "state",
+  ["delete-branch"] = "state",
   words = "words", ["word-add"] = "notice", ["word-note"] = "notice",
   maps = "maps", open = "state", new = "state", import = "state", export = "notice",
 }
@@ -657,6 +658,29 @@ local function visible(session)
   return live(session) and api.nvim_get_current_tabpage() == session.tab
 end
 
+local function delete_branch(session, buf)
+  if not ready(session) then return end
+  local tree = session.state.tree
+  local index = buf == session.tree and api.nvim_win_get_cursor(0)[1] or session.tree_selected
+  local entry = index and tree[index]
+  if not entry then return end
+  if entry.depth == 0 then
+    notify("最初の会話は削除できません。")
+    return
+  end
+  local descendants = 0
+  for i = index + 1, #tree do
+    if tree[i].depth <= entry.depth then break end
+    descendants = descendants + 1
+  end
+  local target = "「" .. label(entry.title) .. "」"
+  if descendants > 0 then target = target .. ("とその子孫 %d 本"):format(descendants) end
+  local question = target .. "を削除しますか？ 会話も削除され、元に戻せません。"
+  if fn.confirm(question, "キャンセル (&N)\n削除 (&D)", 1) == 2 then
+    send(session, { op = "delete-branch", id = entry.id })
+  end
+end
+
 local function review_words(session, words)
   if #words == 0 then
     notify("単語ノートは空です。本文で語句を選択して " .. command_hint .. "w で保存できます。")
@@ -719,8 +743,17 @@ local function receive(session, event)
     if not same_node then close_composer(session) end
     session.state = event
     if not event.busy then session.pending = nil end
+    if event.deleted then
+      local drafts = session.drafts[event.map.id]
+      if drafts then
+        for _, id in ipairs(event.deleted) do drafts[id] = nil end
+      end
+      notify(("分岐を %d 本削除しました。"):format(#event.deleted))
+    end
     if not same_node or old.map.title ~= event.map.title or not vim.deep_equal(old.tree, event.tree) then render_tree(session) end
-    if not same_node or not vim.deep_equal(old.node, event.node) or not vim.deep_equal(old.branchSources, event.branchSources)
+    if completed == "delete-branch" and same_node then
+      mark_branches(session.transcript, session.blocks, event.branchSources)
+    elseif not same_node or not vim.deep_equal(old.node, event.node) or not vim.deep_equal(old.branchSources, event.branchSources)
       or session.shown_prompt ~= (session.pending and session.pending.text) then
       render_transcript(session, same_node or completed == "fork")
     end
@@ -879,6 +912,7 @@ local function bind(session, buf)
     end
     if not ok then notify("Spider を閉じられませんでした。", vim.log.levels.ERROR, err) end
   end, "Spider を閉じる")
+  key(command_prefix .. "D", function() delete_branch(session, buf) end, "Spider の分岐を削除")
   if buf == session.tree then
     key("<CR>", function()
       local id = session.tree_ids[api.nvim_win_get_cursor(0)[1]]

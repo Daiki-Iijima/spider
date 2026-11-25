@@ -115,6 +115,30 @@ export function addChildNode(
   return { map: nextMap, child };
 }
 
+export function removeBranch(map: ChatMap, nodeId: NodeId): { map: ChatMap; parentId: NodeId; removed: Set<NodeId> } | undefined {
+  const parentId = map.nodes[nodeId]?.parentId;
+  if (nodeId === map.rootNodeId || !parentId || !Object.hasOwn(map.nodes, parentId)) return undefined;
+
+  const removed = new Set<NodeId>();
+  const stack = [nodeId];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (id === map.rootNodeId || id === parentId || removed.has(id)) continue;
+    removed.add(id);
+    for (const childId of map.nodes[id]!.children) {
+      if (map.nodes[childId]?.parentId === id) stack.push(childId);
+    }
+  }
+
+  const nodes = { ...map.nodes };
+  for (const id of removed) delete nodes[id];
+  const parent = nodes[parentId]!;
+  const updatedAt = nowIso();
+  nodes[parentId] = { ...parent, children: parent.children.filter((id) => !removed.has(id)), updatedAt };
+  const edges = map.edges.filter(({ from, to }) => !removed.has(from) && !removed.has(to));
+  return { map: { ...map, nodes, edges, updatedAt }, parentId, removed };
+}
+
 export function appendMessage(map: ChatMap, nodeId: NodeId, message: ChatMessage): ChatMap {
   const node = map.nodes[nodeId];
   if (!node) {
