@@ -545,7 +545,6 @@ local function bind(session, buf)
   key("<Tab>", function() send(session, { op = "branch" }) end, "Spider に空の分岐を作成")
   key("<S-Tab>", parent, "Spider の親分岐に移動")
   key("<Left>", parent, "Spider の親分岐に移動")
-  key("h", parent, "Spider の親分岐に移動")
   key("<Right>", function()
     local child = session.state and session.state.node.children[1]
     if child then send(session, { op = "goto", id = child }) end
