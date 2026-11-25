@@ -4,6 +4,7 @@ local fn = vim.fn
 local diagrams = require("spider.diagrams")
 local headings = api.nvim_create_namespace("spider.headings")
 local sources = api.nvim_create_namespace("spider.sources")
+local branch_marks = api.nvim_create_namespace("spider.branches")
 local transcript_colors = api.nvim_create_namespace("spider.transcript.colors")
 local module_path = debug.getinfo(1, "S").source:sub(2)
 local root = fn.fnamemodify(vim.uv.fs_realpath(module_path) or module_path, ":p:h:h:h")
@@ -69,6 +70,7 @@ local function define_colors()
   api.nvim_set_hl(0, "SpiderQuestion", { fg = info, bold = true })
   api.nvim_set_hl(0, "SpiderEmphasis", { fg = strong, bold = true })
   api.nvim_set_hl(0, "SpiderSection", { fg = info, bold = true })
+  api.nvim_set_hl(0, "SpiderBranchSource", { underline = true, sp = info })
   api.nvim_set_hl(0, "SpiderCode", { bg = tint(0.08) })
   api.nvim_set_hl(0, "SpiderCodeInline", { fg = accent, bg = tint(0.09) })
   api.nvim_set_hl(0, "SpiderMuted", { fg = tint(0.67) })
@@ -261,6 +263,43 @@ local function render_tree(session)
   end
 end
 
+local function byte_position(block, byte)
+  for index, line in ipairs(block.lines) do
+    if byte <= #line then return block.first + index - 1, byte end
+    byte = byte - #line - 1
+  end
+end
+
+local function source_position(blocks, source)
+  local block = blocks[source.messageId]
+  if not block then return end
+  local content = block.message.content
+  local first = vim.str_byteindex(content, "utf-16", source.start, false)
+  local last = vim.str_byteindex(content, "utf-16", source["end"], false)
+  if first >= last then return end
+  local row, col = byte_position(block, first)
+  local end_row, end_col = byte_position(block, last)
+  return row, col, end_row, end_col
+end
+
+local function mark_branches(buf, blocks, branch_sources)
+  api.nvim_buf_clear_namespace(buf, branch_marks, 0, -1)
+  local icons = {}
+  for _, source in ipairs(branch_sources) do
+    local row, col, end_row, end_col = source_position(blocks, source)
+    if row then
+      local key = row .. ":" .. col
+      local opts = { end_row = end_row - 1, end_col = end_col, hl_group = "SpiderBranchSource" }
+      if not icons[key] then
+        opts.virt_text = { { "↳ ", "SpiderSection" } }
+        opts.virt_text_pos = "inline"
+        icons[key] = true
+      end
+      api.nvim_buf_set_extmark(buf, branch_marks, row - 1, col, opts)
+    end
+  end
+end
+
 local function render_transcript(session, scroll_end)
   local buf = session.transcript
   local node = session.state and session.state.node
@@ -301,6 +340,7 @@ local function render_transcript(session, scroll_end)
   end
   replace_lines(buf, lines)
   api.nvim_buf_clear_namespace(buf, sources, 0, -1)
+  mark_branches(buf, blocks, session.state and session.state.branchSources or {})
   heading(buf, 1)
   if node and node.parentId then
     api.nvim_buf_set_extmark(buf, headings, 1, 0, { line_hl_group = "SpiderMuted" })
@@ -326,19 +366,9 @@ local function render_transcript(session, scroll_end)
   end
 end
 
-local function byte_position(block, byte)
-  for index, line in ipairs(block.lines) do
-    if byte <= #line then return block.first + index - 1, byte end
-    byte = byte - #line - 1
-  end
-end
-
 local function show_source(session, jump)
-  local block = session.blocks[jump.messageId]
-  if not block then return end
-  local content = block.message.content
-  local row, col = byte_position(block, vim.str_byteindex(content, "utf-16", jump.start, false))
-  local end_row, end_col = byte_position(block, vim.str_byteindex(content, "utf-16", jump["end"], false))
+  local row, col, end_row, end_col = source_position(session.blocks, jump)
+  if not row then return end
   local buf, win = session.transcript, session.transcript_win
   api.nvim_buf_clear_namespace(buf, sources, 0, -1)
   api.nvim_buf_set_extmark(buf, sources, row - 1, col, {
@@ -614,7 +644,8 @@ local function receive(session, event)
     session.state = event
     if not event.busy then session.pending = nil end
     if not same_node or old.map.title ~= event.map.title or not vim.deep_equal(old.tree, event.tree) then render_tree(session) end
-    if not same_node or not vim.deep_equal(old.node, event.node) or session.shown_prompt ~= (session.pending and session.pending.text) then
+    if not same_node or not vim.deep_equal(old.node, event.node) or not vim.deep_equal(old.branchSources, event.branchSources)
+      or session.shown_prompt ~= (session.pending and session.pending.text) then
       render_transcript(session, same_node)
     end
     if event.jump then show_source(session, event.jump) end

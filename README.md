@@ -79,6 +79,8 @@ Spider の `Space` → `?` で操作一覧を開きます。`Space` は設定済
 | Spider を閉じる | `Space s q` |
 <!-- spider-keys:end -->
 
+本文中の `↳` と下線は、そこを引用して作った分岐がある印です。本文の文字は変わらず、引用元のない分岐はツリーにだけ表示されます。
+
 送信すると質問がすぐ表示され、会話ペインの上部に応答待ちのアニメーションと経過時間が表示されます。中止またはエラーになった質問は会話履歴に保存されず、`Space s i` で下書きに戻れます。
 
 会話ペインは強調文・見出し・インラインコードを色分けします。[render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) を設定している場合は、ユーザー設定に従って表やコードブロックも整形します。ユーザー設定のない単体起動では `stdpath("data")/lazy/render-markdown.nvim` を探します。別の場所は `SPIDER_MARKDOWN_RUNTIME` で指定できます。装飾を切り替えても本文や引用位置は変わりません。

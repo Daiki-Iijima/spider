@@ -149,7 +149,15 @@ function run(): void {
         stack.push({ id: node.children[i]!, depth: depth + 1, last: i === node.children.length - 1 });
       }
     }
-    emit({ type: "state", map: { id: map.id, title: map.title }, workspace: dataDir, tree, node: current(), provider, busy: Boolean(pending), jump });
+    const node = current();
+    const branchSources: BranchSource[] = [];
+    for (const id of node.children) {
+      const child = map.nodes[id];
+      if (child?.parentId === node.id && child.sourceMessageId && child.sourceTextRange) {
+        branchSources.push({ messageId: child.sourceMessageId, ...child.sourceTextRange });
+      }
+    }
+    emit({ type: "state", map: { id: map.id, title: map.title }, workspace: dataDir, tree, node, branchSources, provider, busy: Boolean(pending), jump });
   }
 
   function select(id: string, jump?: BranchSource): void {
