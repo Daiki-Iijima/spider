@@ -35,7 +35,7 @@ mkdir -p ~/.local/bin
 ln -s "$PWD/scripts/spider-tui" ~/.local/bin/spider
 ```
 
-`p` で AI の接続先を選びます。
+`spider` は通常の Neovim 設定（たとえば `~/.config/nvim/init.lua`）を読み込みます。AI の接続先は `Space` → `s` → `p` で選びます。
 
 | 接続先 | 準備 |
 |---|---|
@@ -54,39 +54,39 @@ return {
 }
 ```
 
-Spider の `Space` → `?` で操作一覧を開きます（既存の Neovim では `<leader>?`）。左のサイドバーは分岐ツリーだけを表示します。
+Spider の `Space` → `?` で操作一覧を開きます。`Space` は設定済みの `<leader>` に従います。Spider のキーはペイン内だけに割り当てられ、`p`・`n`・`e`・`q` などの通常の Vim 操作は上書きしません。
 
 <!-- spider-keys:start -->
 | 操作 | キー・コマンド |
 |---|---|
 | 操作一覧を開く／閉じる | `Space` → `?` |
-| 質問を書く | `i` |
-| 入力した質問を送信／下書きを残す | `Esc` → `Enter`／`Esc` → `q` |
+| 質問を書く | `Space` → `s` → `i` |
+| 送信／下書きを残して閉じる | `Esc` → `Enter`／`Esc` → `Space s q` |
 | 分岐して質問を書く（選択中は引用） | `Tab` |
-| 選択した発言を空の子分岐にコピー | `V` → `H` |
-| 引用元・親に戻る／最初の子へ | `Shift+Tab`・`←`／`→` |
+| 選択した発言を空の子分岐にコピー | `V` → `Space s h` |
+| 引用元・親に戻る／最初の子へ | `Shift+Tab`／`Space s l` |
 | 編集中のコードや文章を引用 | 行選択 → `:SpiderBranch` |
-| 左の分岐ツリーを表示／非表示 | `Ctrl+n` |
+| 左の分岐ツリーを開いて移動／閉じる | `Ctrl+n` |
 | ペイン移動（左／下／上／右） | `Space` → `h`／`j`／`k`／`l` |
-| ツリーで分岐を開く | `Enter` |
+| 分岐を開き、本文に移動 | ツリーで `Enter` |
 | 会話ツリーの拡大を開く／閉じる | `Space` → `g` |
-| 会話グラフを画像で見る | ツリーで `D` |
-| 本文の図・draw.io ファイルの画像 | 本文で `D` |
-| Markdown の装飾を切り替える | `r` |
-| AI の接続先を選ぶ／送信を中止 | `p`／`x` |
-| マップ一覧／新規／Markdown 書き出し | `m`／`n`／`e` |
-| 会話を取り込む | `I`・`:SpiderImport` |
-| プレビューを閉じる／Spider を終了 | `q` |
+| 会話グラフや本文の図を画像で見る | `Space s d` |
+| 画像を閉じる／外部で開く | `Esc`／`Enter` |
+| Markdown の装飾を切り替える | `Space s r` |
+| AI の接続先を選ぶ／送信を中止 | `Space s p`／`Space s x` |
+| マップ一覧／新規／Markdown 書き出し | `Space s m`／`Space s n`／`Space s e` |
+| 会話を取り込む | `Space s I`・`:SpiderImport` |
+| Spider を閉じる | `Space s q` |
 <!-- spider-keys:end -->
 
-送信すると質問がすぐ表示され、会話ペインの上部に応答待ちのアニメーション、経過時間、`x` で中止できることが表示されます。中止またはエラーになった質問は会話履歴に保存されず、`i` で下書きに戻れます。
+送信すると質問がすぐ表示され、会話ペインの上部に応答待ちのアニメーションと経過時間が表示されます。中止またはエラーになった質問は会話履歴に保存されず、`Space s i` で下書きに戻れます。
 
-会話ペインは強調文・見出し・インラインコードを色分けします。[render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) があれば表やコードブロックも整形します。既存の Neovim ではプラグイン設定を変更しません。単体の `spider` は `stdpath("data")/lazy/render-markdown.nvim` を読み込み、別の場所にある場合は `SPIDER_MARKDOWN_RUNTIME` で指定できます。装飾を切り替えても本文や引用位置は変わりません。
+会話ペインは強調文・見出し・インラインコードを色分けします。[render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) を設定している場合は、ユーザー設定に従って表やコードブロックも整形します。ユーザー設定のない単体起動では `stdpath("data")/lazy/render-markdown.nvim` を探します。別の場所は `SPIDER_MARKDOWN_RUNTIME` で指定できます。装飾を切り替えても本文や引用位置は変わりません。
 
 画像プレビューは、会話グラフには Graphviz (`dot`)、`mermaid` コードブロックには `@mermaid-js/mermaid-cli` (`mmdc` + Chromium)、`drawio` コードブロック（XML）と `.drawio` ファイルには draw.io Desktop (`drawio`) を使います。Mermaid と draw.io の描画は Linux の bubblewrap (`bwrap`) でネットワークから隔離します。通常のテキストだけで描いた図は自動変換しません。
-本文の図にカーソルを置いて `D` を押すと、その図を表示します。図の外なら選択メニューが開きます。draw.io は PNG 出力の既定に従って最初のページを表示します。
+本文の図にカーソルを置いて `Space s d` を押すと、その図を表示します。図の外なら選択メニューが開きます。draw.io は PNG 出力の既定に従って最初のページを表示します。
 
-Ghostty または Kitty 上の単体 `spider` では、Neovim のオプションパッケージ（例: `stdpath("data")/site/pack/spider/opt/image.nvim`）に [image.nvim](https://github.com/3rd/image.nvim) と、`PATH` 上に ImageMagick (`magick`) があれば、画像が TUI 内に開きます。既存の Neovim では設定済みの image.nvim を使います。プレビュー内の `o` で外部ビューアーを開けます。対応する端末・プラグインがない場合や tmux 内では、既定の画像ビューアーで開きます。
+Ghostty または Kitty 上の単体 `spider` では、Neovim のオプションパッケージ（例: `stdpath("data")/site/pack/spider/opt/image.nvim`）に [image.nvim](https://github.com/3rd/image.nvim) と、`PATH` 上に ImageMagick (`magick`) があれば、画像が TUI 内に開きます。既存の Neovim では設定済みの image.nvim を使います。プレビュー内の `Enter` で外部ビューアーを開けます。対応する端末・プラグインがない場合や tmux 内では、既定の画像ビューアーで開きます。
 
 マップは `~/Spider/maps/` に保存され、Markdown の既定の書き出し先は `~/Spider/` です。初回起動時に旧保存先（通常 `~/.local/share/spider-tui`）のマップをコピーします。元のデータは残ります。保存先を変更する場合は `SPIDER_DATA_DIR` を設定してください。
 
@@ -94,7 +94,7 @@ Ghostty または Kitty 上の単体 `spider` では、Neovim のオプション
 
 ### Import a ChatGPT conversation
 
-移したい **ChatGPT の会話**に下の指示文を貼ります。返ってきた JSON 本体を UTF-8 の `chat.json` に保存し、`:SpiderImport ~/Downloads/chat.json` または Spider の `I` で取り込みます。
+移したい **ChatGPT の会話**に下の指示文を貼ります。返ってきた JSON 本体を UTF-8 の `chat.json` に保存し、`:SpiderImport ~/Downloads/chat.json` または `Space s I` で取り込みます。
 
 ```text
 このチャットで、この依頼より前に交わした会話を Spider に移したいです。

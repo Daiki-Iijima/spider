@@ -37,11 +37,12 @@ local function terminal_images()
   if vim.env.TERM_PROGRAM ~= "ghostty" and not vim.env.KITTY_WINDOW_ID then return end
   if vim.env.SPIDER_STANDALONE == "1" and not package.loaded.image then
     if fn.executable("magick") ~= 1 then return end
-    -- --clean intentionally omits the user's package directory from 'packpath'.
-    local local_packages = fn.stdpath("data") .. "/site"
-    local plugin = fn.globpath(local_packages, "pack/*/opt/image.nvim", false, true)[1]
-    if plugin then vim.opt.runtimepath:append(plugin) end
     pcall(vim.cmd.packadd, "image.nvim")
+    -- Plugin managers can remove the user package directory from 'packpath'.
+    if #api.nvim_get_runtime_file("lua/image/init.lua", false) == 0 then
+      local plugin = fn.globpath(fn.stdpath("data") .. "/site", "pack/*/opt/image.nvim", false, true)[1]
+      if plugin then vim.opt.runtimepath:append(plugin) end
+    end
     local ok, image = pcall(require, "image")
     if not ok then return end
     local integrations = {}
@@ -64,7 +65,7 @@ local function preview(path, title, notify)
   local win = api.nvim_open_win(buf, true, {
     relative = "editor", row = 2, col = 4, width = width, height = height,
     style = "minimal", border = "rounded", title = " " .. title .. " ",
-    footer = " q / Esc 閉じる   o 外部で開く ", footer_pos = "center",
+    footer = " Esc 閉じる   Enter 外部で開く ", footer_pos = "center",
   })
   local ok, picture = pcall(image.from_file, path, { window = win, buffer = buf, x = 0, y = 0 })
   if not ok or not picture then
@@ -74,10 +75,8 @@ local function preview(path, title, notify)
   api.nvim_create_autocmd("WinClosed", {
     pattern = tostring(win), once = true, callback = function() picture:clear() end,
   })
-  for _, key in ipairs({ "q", "<Esc>" }) do
-    vim.keymap.set("n", key, function() api.nvim_win_close(win, true) end, { buffer = buf })
-  end
-  vim.keymap.set("n", "o", function() external(path, notify) end, { buffer = buf })
+  vim.keymap.set("n", "<Esc>", function() api.nvim_win_close(win, true) end, { buffer = buf, nowait = true })
+  vim.keymap.set("n", "<CR>", function() external(path, notify) end, { buffer = buf })
   picture:render()
 end
 

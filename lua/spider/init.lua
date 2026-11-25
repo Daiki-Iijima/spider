@@ -8,9 +8,10 @@ local transcript_colors = api.nvim_create_namespace("spider.transcript.colors")
 local module_path = debug.getinfo(1, "S").source:sub(2)
 local root = fn.fnamemodify(vim.uv.fs_realpath(module_path) or module_path, ":p:h:h:h")
 local backend = root .. "/dist/spider-tui.cjs"
-local leader = vim.env.SPIDER_STANDALONE == "1" and "<Space>" or "<leader>"
+local leader = vim.env.SPIDER_STANDALONE == "1" and not vim.g.mapleader and "<Space>" or "<leader>"
 local leader_hint = (leader == "<Space>" or vim.g.mapleader == " ") and "Space" or "<Leader>"
 local help_key, help_hint = leader .. "?", leader_hint .. " ?"
+local command_prefix, command_hint = leader .. "s", leader_hint .. " s "
 local providers = { "codex", "claude", "omp" }
 local provider_labels = { codex = "Codex", claude = "Claude", omp = "omp" }
 local role_labels = { system = "会話の指示", user = "質問", assistant = "AI の回答" }
@@ -96,7 +97,7 @@ local function setup_standalone_markdown()
 end
 
 local function load_standalone_markdown()
-  if vim.env.SPIDER_STANDALONE ~= "1" or vim.g.loaded_render_markdown then return end
+  if vim.env.SPIDER_STANDALONE ~= "1" or vim.env.MYVIMRC or vim.g.loaded_render_markdown then return end
   if #api.nvim_get_runtime_file("plugin/render-markdown.lua", false) == 0 then
     local dir = vim.env.SPIDER_MARKDOWN_RUNTIME or (fn.stdpath("data") .. "/lazy/render-markdown.nvim")
     if vim.uv.fs_stat(dir .. "/plugin/render-markdown.lua") then
@@ -159,7 +160,7 @@ local function toggle_help(session)
   for index = start + 4, finish do
     local action, keys = doc[index]:match("^|%s*(.-)%s*|%s*(.-)%s*|$")
     if action and keys then
-      keys = keys:gsub("`", "")
+      keys = keys:gsub("`", ""):gsub("Space", leader_hint)
       key_width = math.max(key_width, fn.strdisplaywidth(keys))
       spans[#spans + 1] = #keys
       lines[#lines + 1] = { keys, action }
@@ -181,13 +182,13 @@ local function toggle_help(session)
     relative = "editor", row = math.floor((vim.o.lines - height) / 2) - 1,
     col = math.floor((vim.o.columns - width) / 2) - 1, width = width, height = height,
     style = "minimal", border = "rounded", title = " Spider の操作 ",
-    footer = " q / Esc 閉じる ", footer_pos = "center",
+    footer = " Esc 閉じる ", footer_pos = "center",
   })
   session.help_win = win
   configure(win, false)
   vim.wo[win].scrolloff = 0
-  for _, key in ipairs({ "q", "<Esc>", help_key }) do
-    vim.keymap.set("n", key, function() api.nvim_win_close(win, true) end, { buffer = buf })
+  for _, key in ipairs({ "<Esc>", help_key }) do
+    vim.keymap.set("n", key, function() api.nvim_win_close(win, true) end, { buffer = buf, nowait = true })
   end
 end
 
@@ -205,10 +206,10 @@ local function draw_status(session)
     local frame = spinner[math.floor(ms / frame_ms) % #spinner + 1]
     local phase = session.cancelling and "中止中" or "AI の応答待ち"
     activity = "%#DiagnosticInfo#" .. frame .. " " .. phase .. (" · %d秒"):format(math.floor(ms / 1000)) .. "%*"
-    hint = session.cancelling and "" or " %=%<x で中止 "
+    hint = session.cancelling and "" or " %=%<" .. command_hint .. "x で中止 "
   else
     activity = not session.job and "停止中" or not state and "起動中" or session.waiting and "処理中" or "待機中"
-    hint = " %=%<i 質問を書く  Tab 分岐  " .. help_hint .. " 操作 "
+    hint = " %=%<" .. command_hint .. "i 質問を書く  Tab 分岐  " .. help_hint .. " 操作 "
   end
   vim.wo[session.transcript_win].winbar = " Spider · " .. (provider and provider .. " · " or "") .. activity .. hint
 end
@@ -294,8 +295,8 @@ local function render_transcript(session, scroll_end)
       last_message_line = #lines
     elseif #node.messages == 0 then
       lines[#lines + 1] = node.parentId
-        and "この分岐はまだ始まっていません。i で質問できます。"
-        or "このマップにはまだ発言がありません。i で質問できます。"
+        and ("この分岐はまだ始まっていません。" .. command_hint .. "i で質問できます。")
+        or ("このマップにはまだ発言がありません。" .. command_hint .. "i で質問できます。")
     end
   end
   replace_lines(buf, lines)
@@ -313,7 +314,7 @@ local function render_transcript(session, scroll_end)
   end
   for _, figure in ipairs(figures) do
     api.nvim_buf_set_extmark(buf, headings, figure.first - 1, 0, {
-      virt_lines = { { { "◇ " .. figure.label .. "  ·  D で画像を表示", "SpiderSection" } } },
+      virt_lines = { { { "◇ " .. figure.label .. "  ·  " .. command_hint .. "d で画像を表示", "SpiderSection" } } },
       virt_lines_above = true,
     })
   end
@@ -360,7 +361,7 @@ local replies = {
 local function ready(session)
   if not live(session) or not session.job then notify("バックエンドが起動していません。")
   elseif not session.state then notify("バックエンドを起動中です。")
-  elseif session.pending or session.state.busy then notify("応答を待つか、x で中止してください。")
+  elseif session.pending or session.state.busy then notify("応答を待つか、" .. command_hint .. "x で中止してください。")
   elseif session.waiting then notify("処理が終わるまでお待ちください。")
   else return true end
   return false
@@ -395,6 +396,7 @@ local function show_tree(session)
   vim.wo[win].winbar = " 分岐 %=%<" .. help_hint .. " 操作 "
   vim.wo[win].winfixwidth = true
   if session.tree_selected then api.nvim_win_set_cursor(win, { session.tree_selected, 0 }) end
+  return win
 end
 
 local function toggle_graph(session)
@@ -425,7 +427,7 @@ end
 
 local function bind_panes(session, buf)
   vim.keymap.set("n", leader .. "g", function() toggle_graph(session) end, {
-    buffer = buf, nowait = true, desc = "Spider の会話グラフを拡大",
+    buffer = buf, desc = "Spider の会話グラフを拡大",
   })
   vim.keymap.set("n", "<C-n>", function()
     if owns_window(session.tree_win, session.tree) then
@@ -436,9 +438,13 @@ local function bind_panes(session, buf)
         api.nvim_set_current_win(session.transcript_win)
       end
     else
-      local ok, err = pcall(show_tree, session)
-      if ok then session.tree_hidden = false
-      else notify("分岐ツリーを開けませんでした。", vim.log.levels.ERROR, err) end
+      local ok, win = pcall(show_tree, session)
+      if ok then
+        session.tree_hidden = false
+        api.nvim_set_current_win(win)
+      else
+        notify("分岐ツリーを開けませんでした。", vim.log.levels.ERROR, win)
+      end
     end
   end, { buffer = buf, desc = "Spider の分岐ツリーを表示／非表示" })
   for dir, name in pairs({ h = "左", j = "下", k = "上", l = "右" }) do
@@ -479,7 +485,7 @@ local function compose(session)
   local composer = { buf = buf, win = win, drafts = drafts, node = node }
   session.composer = composer
   configure(win, false)
-  vim.wo[win].winbar = " 質問を入力 · Esc → Enter で送信 · q で下書きを残して閉じる "
+  vim.wo[win].winbar = " 質問を入力 · Esc → Enter で送信 · " .. command_hint .. "q で下書きを残して閉じる "
   bind_help(session, buf)
   bind_panes(session, buf)
   api.nvim_create_autocmd("BufWinLeave", {
@@ -491,7 +497,8 @@ local function compose(session)
       session.composer = nil
     end,
   })
-  vim.keymap.set("n", "q", function() close_composer(session) end, { buffer = buf, desc = "Spider の下書きを残して閉じる" })
+  vim.keymap.set("n", command_prefix .. "q", function() close_composer(session) end,
+    { buffer = buf, desc = "Spider の下書きを残して閉じる" })
   vim.keymap.set("n", "<CR>", function()
     local text = table.concat(api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
     if not text:find("%S") then notify("送信する内容を入力してください。"); return end
@@ -562,7 +569,7 @@ end
 local function copy_history(session)
   if not ready(session) then return end
   if fn.mode() ~= "V" then
-    notify("V で会話の範囲を行選択してから H を押してください。")
+    notify("V で会話の範囲を行選択してから " .. command_hint .. "h を押してください。")
     return
   end
   local first_row, last_row = fn.line("v"), fn.line(".")
@@ -698,13 +705,12 @@ local function bind(session, buf)
   end
   key("<Tab>", function() send(session, { op = "branch" }) end, "Spider に空の分岐を作成")
   key("<S-Tab>", parent, "Spider の親分岐に移動")
-  key("<Left>", parent, "Spider の親分岐に移動")
-  key("<Right>", function()
+  key(command_prefix .. "l", function()
     local child = session.state and session.state.node.children[1]
     if child then send(session, { op = "goto", id = child }) end
   end, "Spider の最初の子分岐に移動")
-  key("i", function() compose(session) end, "Spider へのメッセージを入力")
-  key("p", function()
+  key(command_prefix .. "i", function() compose(session) end, "Spider へのメッセージを入力")
+  key(command_prefix .. "p", function()
     if not visible(session) or not ready(session) then return end
     vim.ui.select(providers, {
       prompt = "AI の接続先を選択：",
@@ -713,22 +719,22 @@ local function bind(session, buf)
       if provider and visible(session) then send(session, { op = "provider", provider = provider }) end
     end)
   end, "Spider の AI 接続先を選択")
-  key("m", function() send(session, { op = "maps" }) end, "Spider マップを選択")
-  key("n", function()
+  key(command_prefix .. "m", function() send(session, { op = "maps" }) end, "Spider マップを選択")
+  key(command_prefix .. "n", function()
     input("新しい Spider マップの名前：", nil, function(title) return { op = "new", title = title } end)
   end, "Spider マップを作成")
-  key("I", function()
+  key(command_prefix .. "I", function()
     input("取り込む会話ファイル：", "file", function(path)
       return { op = "import", path = fn.fnamemodify(path, ":p") }
     end)
   end, "会話を Spider に取り込み")
-  key("e", function()
+  key(command_prefix .. "e", function()
     local workspace = session.state and session.state.workspace
     input("マップの書き出し先：", "file", function(path)
       return { op = "export", path = path }
     end, workspace and workspace .. "/")
   end, "Spider マップを書き出し")
-  key("D", function()
+  key(command_prefix .. "d", function()
     local state = session.state
     if not state then return end
     local function still_here()
@@ -740,15 +746,15 @@ local function bind(session, buf)
       diagrams.choose(session.figures, api.nvim_win_get_cursor(0)[1], notify, still_here)
     end
   end, "Spider の図を画像で表示")
-  key("r", function()
+  key(command_prefix .. "r", function()
     if not vim.g.loaded_render_markdown then
       notify("Markdown の装飾には render-markdown.nvim が必要です。")
       return
     end
     api.nvim_buf_call(session.transcript, require("render-markdown").buf_toggle)
   end, "Spider の Markdown 表示を切替")
-  key("x", function() send(session, { op = "cancel" }) end, "Spider へのリクエストを中止")
-  key("q", function()
+  key(command_prefix .. "x", function() send(session, { op = "cancel" }) end, "Spider へのリクエストを中止")
+  key(command_prefix .. "q", function()
     if not live(session) then return end
     if api.nvim_get_current_win() == session.graph_win then
       api.nvim_win_close(session.graph_win, true)
@@ -766,17 +772,14 @@ local function bind(session, buf)
   if buf == session.tree then
     key("<CR>", function()
       local id = session.tree_ids[api.nvim_win_get_cursor(0)[1]]
-      if id and send(session, { op = "goto", id = id }) and api.nvim_get_current_win() == session.graph_win then
-        api.nvim_win_close(session.graph_win, true)
-        if owns_window(session.transcript_win, session.transcript) then api.nvim_set_current_win(session.transcript_win) end
-      end
-    end, "Spider の分岐に移動")
-    key("<Esc>", function()
+      if not id or not send(session, { op = "goto", id = id }) then return end
       if api.nvim_get_current_win() == session.graph_win then api.nvim_win_close(session.graph_win, true) end
-    end, "Spider の会話グラフを閉じる")
+      if owns_window(session.transcript_win, session.transcript) then api.nvim_set_current_win(session.transcript_win) end
+    end, "Spider の分岐に移動")
   else
     vim.keymap.set("x", "<Tab>", function() visual_branch(session) end, { buffer = buf, desc = "Spider の応答を引用して分岐" })
-    vim.keymap.set("x", "H", function() copy_history(session) end, { buffer = buf, desc = "選択した会話を空の子分岐にコピー" })
+    vim.keymap.set("x", command_prefix .. "h", function() copy_history(session) end,
+      { buffer = buf, desc = "選択した会話を空の子分岐にコピー" })
   end
 end
 

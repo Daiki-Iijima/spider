@@ -6,11 +6,13 @@
 - Fork: expandable conversation graph and inline Markdown rendering in the TUI, while keeping source-linked branching.
 - Fork: copy selected conversation history into an empty child branch without changing the parent transcript.
 - Fork: show elapsed response time and cancellation in the TUI, with compact branch provenance and clear question/answer labels.
-- Fork: keep Neovim's `h` cursor movement; use `Shift+Tab` or `←` to return to the parent branch.
+- Fork: keep Neovim's `h` cursor movement; use `Shift+Tab` to return to the parent branch.
 - Fork: focus the question composer as soon as a new branch is created.
 - Fork: color headings, emphasis, and inline code for easier transcript reading; preview conversation graphs, Mermaid, and draw.io as local PNGs.
 - Fork: keep the sidebar for branches and move the Japanese shortcut guide to `Space` → `?`.
 - Fork: toggle the branch sidebar with `Ctrl+n`, move between panes with `Space` → `h/j/k/l`, and open the expanded tree with `Space` → `g` without overriding `gg`.
+- Fork: load the user's Neovim configuration in the standalone launcher and keep Spider-only commands under `<leader>s` instead of overriding Vim editing keys.
+- Fork: focus the branch sidebar when it opens and the transcript when a branch is selected with `Enter`.
 - [0.1.14：设置页标题文案审核修正及本轮完整更新](.github/release-notes/0.1.14.md)
 - [0.1.13：教学风格、节点随记与社区审核兼容修正](.github/release-notes/0.1.13.md)
 - [0.1.12：教学风格、Enter 摘录、节点随记导出和设置页改进](.github/release-notes/0.1.12.md)
