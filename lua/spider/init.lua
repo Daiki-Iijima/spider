@@ -427,7 +427,7 @@ local function bind_panes(session, buf)
   vim.keymap.set("n", leader .. "g", function() toggle_graph(session) end, {
     buffer = buf, nowait = true, desc = "Spider の会話グラフを拡大",
   })
-  vim.keymap.set("n", leader .. "n", function()
+  vim.keymap.set("n", "<C-n>", function()
     if owns_window(session.tree_win, session.tree) then
       local focused = api.nvim_get_current_win() == session.tree_win
       api.nvim_win_close(session.tree_win, true)
