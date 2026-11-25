@@ -270,7 +270,7 @@ local function send(session, request)
   if request.op == "cancel" then
     session.cancelling = true
   else
-    session.waiting = replies[request.op]
+    session.waiting = replies[request.op] and request.op or nil
   end
   status(session)
   return true
@@ -307,7 +307,7 @@ local function compose(session)
   local composer = { buf = buf, win = win, drafts = drafts, node = node }
   session.composer = composer
   configure(win, false)
-  vim.wo[win].winbar = " Spider 入力 · Esc → Enter で送信 · q で下書き保存 "
+  vim.wo[win].winbar = " 質問を入力 · Esc → Enter で送信 · q で下書きを残して閉じる "
   api.nvim_create_autocmd("BufWinLeave", {
     buffer = buf,
     callback = function()
@@ -424,7 +424,8 @@ local function copy_history(session)
 end
 
 local function receive(session, event)
-  if event.type == session.waiting or event.type == "error" then session.waiting = nil end
+  local completed = event.type == replies[session.waiting] and session.waiting
+  if completed or event.type == "error" then session.waiting = nil end
   if event.type == "state" then
     local old = session.state
     local same_node = old and old.map.id == event.map.id and old.node.id == event.node.id
@@ -440,6 +441,9 @@ local function receive(session, event)
     if queued then
       session.startup_request = nil
       send(session, queued)
+    elseif completed == "branch" and visible(session) and old and event.node.parentId == old.node.id then
+      if owns_window(session.graph_win, session.tree) then api.nvim_win_close(session.graph_win, true) end
+      compose(session)
     end
   elseif event.type == "submitted" then
     local draft = session.pending
