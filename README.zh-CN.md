@@ -18,6 +18,8 @@
 
 > 首次安装时 Spider 会跟随 Obsidian 的界面语言，也可以随时在设置中切换中文或 English。
 
+此分支也支持[独立终端界面和 Neovim](README.md#spider-tui--neovim)，可以用 Codex CLI 或 Claude Code CLI 已登录的订阅账号对话，无需 Obsidian。
+
 ---
 
 ## 🤔 为什么需要 Spider？

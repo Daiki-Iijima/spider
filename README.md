@@ -18,6 +18,40 @@ An Obsidian plugin that turns ChatGPT / Claude / DeepSeek / any OpenAI-compatibl
 
 > The screenshot shows the Chinese interface. Spider follows Obsidian's language on first install, and you can switch between Chinese and English at any time.
 
+## Spider TUI / Neovim
+
+This fork also runs Spider in a terminal without Obsidian. The terminal app uses Neovim (0.11+) as its interface and Node.js (22+) as its backend. Build and launch from this checkout:
+
+```sh
+npm ci
+npm run build:tui
+npm run tui
+```
+
+Install an up-to-date [Codex CLI](https://developers.openai.com/codex/auth) or [Claude Code CLI](https://code.claude.com/docs/en/quickstart) on `PATH`. To use your subscription, sign in with `codex login` (choose ChatGPT) or `claude auth login --claudeai` (choose your Claude subscription). Spider uses the official CLI's saved login; it does not copy credentials or fall back to an API key. Usage counts against your provider's plan and any account-level overage settings.
+
+To open Spider inside your existing editor, add this local spec to lazy.nvim and run `:Spider`:
+
+```lua
+return {
+  dir = vim.fn.expand("~/Projects/spider"), -- use the path to your built checkout
+  cmd = { "Spider", "SpiderBranch" },
+}
+```
+
+| Action | Key or command |
+|---|---|
+| Write a prompt | `i`, then `Esc` and `Enter` to send; `q` keeps the current draft |
+| Branch from a reply | Select reply text in Visual mode, then `Tab`; normal-mode `Tab` starts an empty branch |
+| Return to the quoted source | `Shift+Tab` or `←`; `→` visits the first child |
+| Quote code or prose from an editor buffer | Select lines, then `:'<,'>SpiderBranch` |
+| Choose a branch in the tree | `Ctrl+w w` to focus the tree, then `Enter` on the branch |
+| Switch provider or cancel a request | `p` or `x` |
+| Open, create, or export a map to Markdown | `m`, `n`, or `e` |
+| Close Spider | `q` |
+
+Selecting or branching does not send anything. Submitting a prompt sends the current branch history, its quote (if any), and the parent topic, not your open buffers or working directory. Provider commands run in a temporary directory with tool access restricted; system and organization policies still apply. Maps are stored in `$XDG_DATA_HOME/spider-tui` (usually `~/.local/share/spider-tui`), separately from Obsidian. Override the location with `SPIDER_DATA_DIR`.
+
 ---
 
 ## 🤔 Why Spider?

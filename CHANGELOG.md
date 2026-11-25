@@ -1,5 +1,6 @@
 # 更新说明 / Release notes
 
+- [Fork: standalone terminal and Neovim support / 独立终端与 Neovim 支持](README.md#spider-tui--neovim) with ChatGPT and Claude subscriptions via their official CLIs.
 - [0.1.14：设置页标题文案审核修正及本轮完整更新](.github/release-notes/0.1.14.md)
 - [0.1.13：教学风格、节点随记与社区审核兼容修正](.github/release-notes/0.1.13.md)
 - [0.1.12：教学风格、Enter 摘录、节点随记导出和设置页改进](.github/release-notes/0.1.12.md)

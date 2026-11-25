@@ -15,6 +15,8 @@
   "scripts": {
     "dev": "node scripts/build.mjs",
     "build": "tsc --noEmit && node scripts/build.mjs production",
+    "build:tui": "tsc --noEmit && esbuild src/tui/main.ts --bundle --platform=node --target=node22 --outfile=dist/spider-tui.cjs",
+    "tui": "sh scripts/spider-tui",
     "link": "node scripts/link.mjs",
     "test": "vitest run",
     "test:browser": "node scripts/check-browser.mjs",

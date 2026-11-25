@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+if [ ! -f "$root/dist/spider-tui.cjs" ]; then
+  printf 'Build Spider first: cd "%s" && npm ci && npm run build:tui\n' "$root" >&2
+  exit 1
+fi
+
+SPIDER_RUNTIME="$root" SPIDER_STANDALONE=1 exec nvim --clean -i NONE \
+  --cmd 'lua vim.opt.runtimepath:prepend(vim.env.SPIDER_RUNTIME)' \
+  '+runtime plugin/spider.lua' +Spider
