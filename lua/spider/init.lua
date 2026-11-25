@@ -98,6 +98,7 @@ local function render_tree(session)
     "m 一覧 / n 新規",
     "I 取り込み",
     "g グラフを拡大",
+    "選択中 H 履歴コピー",
     "r Markdown 切替",
     "e 書き出し",
     "p 接続先",
@@ -158,7 +159,11 @@ local function render_transcript(session, scroll_end)
       last_message_line = #lines
       lines[#lines + 1] = ""
     end
-    if #node.messages == 0 then lines[#lines + 1] = "まだ会話がありません。i で入力できます。" end
+    if #node.messages == 0 then
+      lines[#lines + 1] = node.parentId
+        and "この分岐にはまだ発言がありません。i で質問、Shift+Tab で親の会話へ。"
+        or "このマップにはまだ発言がありません。i で入力できます。"
+    end
   end
   replace_lines(buf, lines)
   api.nvim_buf_clear_namespace(buf, sources, 0, -1)
@@ -197,6 +202,7 @@ end
 
 local replies = {
   ["goto"] = "state", parent = "state", branch = "state", provider = "state",
+  ["copy-history"] = "state",
   maps = "maps", open = "state", new = "state", import = "state", export = "notice",
 }
 
@@ -332,6 +338,44 @@ end
 
 local function visible(session)
   return live(session) and api.nvim_get_current_tabpage() == session.tab
+end
+
+local function copy_history(session)
+  if not ready(session) then return end
+  if fn.mode() ~= "V" then
+    notify("V で会話の範囲を行選択してから H を押してください。")
+    return
+  end
+  local first_row, last_row = fn.line("v"), fn.line(".")
+  if first_row > last_row then first_row, last_row = last_row, first_row end
+  local node = session.state.node
+  local first, last
+  for _, message in ipairs(node.messages) do
+    local block = session.blocks[message.id]
+    if block.first - 2 <= last_row and block.first + #block.lines - 1 >= first_row then
+      first = first or message.id
+      last = message.id
+    end
+  end
+  if not first then
+    notify("コピーしたい発言を含む行を選択してください。")
+    return
+  end
+  local children, choices = {}, {}
+  for _, id in ipairs(node.children) do children[id] = true end
+  for _, entry in ipairs(session.state.tree) do
+    if children[entry.id] and entry.empty then choices[#choices + 1] = entry end
+  end
+  if #choices == 0 then
+    notify("コピー先にできる空の子分岐がありません。")
+    return
+  end
+  vim.ui.select(choices, { prompt = "会話履歴のコピー先：", format_item = function(entry) return label(entry.title) end }, function(choice)
+    if choice and visible(session) and session.state.node.id == node.id
+      and send(session, { op = "copy-history", childId = choice.id, first = first, last = last }) then
+      api.nvim_feedkeys(vim.keycode("<Esc>"), "ni", false)
+    end
+  end)
 end
 
 local function receive(session, event)
@@ -519,6 +563,7 @@ local function bind(session, buf)
     end, "Spider の会話グラフを閉じる")
   else
     vim.keymap.set("x", "<Tab>", function() visual_branch(session) end, { buffer = buf, desc = "Spider の応答を引用して分岐" })
+    vim.keymap.set("x", "H", function() copy_history(session) end, { buffer = buf, desc = "選択した会話を空の子分岐にコピー" })
   end
 end
 

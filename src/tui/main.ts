@@ -8,12 +8,14 @@ import { isChatMap, isSourceTextRange } from "../domain/guards";
 import { exportMarkdown } from "../export/exporters";
 import type { BranchSource, ChatMap } from "../types";
 import { truncateText } from "../utils/text";
+import { createId } from "../utils/id";
 import { askProvider, type Provider } from "./providers";
 
 type Request =
   | { op: "goto" | "open"; id: string }
   | { op: "parent" | "cancel" | "maps" }
   | { op: "branch"; source?: BranchSource; anchor?: string }
+  | { op: "copy-history"; childId: string; first: string; last: string }
   | { op: "ask"; text: string }
   | { op: "provider"; provider: Provider }
   | { op: "new"; title: string }
@@ -134,7 +136,7 @@ function run(): void {
   }
 
   function state(jump?: BranchSource): void {
-    const tree: { id: string; title: string; depth: number; last: boolean }[] = [];
+    const tree: { id: string; title: string; depth: number; last: boolean; empty: boolean }[] = [];
     const stack = [{ id: map.rootNodeId, depth: 0, last: true }];
     const seen = new Set<string>();
     while (stack.length) {
@@ -142,7 +144,7 @@ function run(): void {
       const node = map.nodes[id];
       if (!node || seen.has(id)) continue;
       seen.add(id);
-      tree.push({ id, title: node.title, depth, last });
+      tree.push({ id, title: node.title, depth, last, empty: node.messages.length === 0 });
       for (let i = node.children.length - 1; i >= 0; i--) {
         stack.push({ id: node.children[i]!, depth: depth + 1, last: i === node.children.length - 1 });
       }
@@ -227,6 +229,20 @@ function run(): void {
         const branch = addChildNode(map, nodeId, { anchorText: anchor, source, title: anchor === undefined ? "無題の分岐" : undefined });
         save(anchor === undefined ? branch.map : updateNode(branch.map, branch.child.id, { anchorText: anchor }));
         select(branch.child.id);
+        return;
+      }
+      case "copy-history": {
+        const parent = current();
+        const child = map.nodes[request.childId];
+        if (!child || child.parentId !== parent.id || child.messages.length !== 0) {
+          throw new Error("発言のない子分岐にだけ履歴をコピーできます。");
+        }
+        const first = parent.messages.findIndex(({ id }) => id === request.first);
+        const last = parent.messages.findIndex(({ id }) => id === request.last);
+        if (first < 0 || last < first) throw new Error("親の会話でコピーする発言が見つかりません。");
+        const messages = parent.messages.slice(first, last + 1).map((message) => ({ ...message, id: createId("msg") }));
+        save(updateNode(map, child.id, { messages }));
+        select(child.id);
         return;
       }
       case "ask":
